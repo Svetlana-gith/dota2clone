@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.20)
+project(DebugLayerDemo)
+
+set(CMAKE_CXX_STANDARD 17)
+
+add_executable(debug_layer_demo debug_layer_demo.cpp)
+
+target_link_libraries(debug_layer_demo
+    d3d12.lib
+    dxgi.lib
+)
+
+# Включаем Debug Layer в Debug сборках
+target_compile_definitions(debug_layer_demo
+    PRIVATE
+        $<$<CONFIG:Debug>:DX12_ENABLE_DEBUG_LAYER>
+)

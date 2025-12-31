@@ -1,0 +1,28 @@
+# Cursor Rules
+
+## MCP Server Configuration
+**ALWAYS use Context7 MCP server** for all documentation queries, code examples, and API references.
+Context7 MCP server is configured and should be used automatically for all requests.
+
+### Context7 Setup
+**PREREQUISITE**: Node.js (version 18+) must be installed before configuring Context7.
+
+To enable Context7 MCP server in Cursor:
+1. Install Node.js from https://nodejs.org/ (if not already installed)
+2. Restart Cursor after Node.js installation
+3. Open Cursor Settings (Ctrl+,)
+4. Go to "MCP Servers" or "Tools" section
+5. Click "+ Add MCP" or "Добавить MCP"
+6. Configure:
+   - **Name**: `Context7`
+   - **Command**: `npx`
+   - **Args**: `-y`, `@upstash/context7-mcp@latest`
+7. Save settings and restart Cursor
+
+### Context7 Usage Rules
+- **ALWAYS** use Context7 MCP server for documentation queries
+- **ALWAYS** use Context7 when searching for API documentation
+- **ALWAYS** use Context7 for code examples and best practices
+- Context7 provides latest documentation and code examples
+- No need to explicitly add "use context7" - it should be used automatically
+

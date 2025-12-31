@@ -1,0 +1,42 @@
+## Build outputs (CMake)
+/build/
+/build_*/
+/cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/install_manifest.txt
+
+## Visual Studio / MSBuild
+/.vs/
+**/*.VC.db
+**/*.VC.VC.opendb
+**/*.suo
+**/*.user
+**/*.tlog
+**/*.lastbuildstate
+**/*.idb
+**/*.ilk
+**/*.ipdb
+**/*.iobj
+**/*.obj
+**/*.pdb
+**/*.lib
+**/*.exp
+**/*.dll
+**/*.exe
+
+## Runtime logs / dumps
+/runlogs/
+*.dmp
+*.log
+_launch_stdout.txt
+_launch_stderr.txt
+
+## ImGui local state
+imgui.ini
+
+## Cursor / Kiro local metadata
+/.cursor/
+/.kiro/
+
