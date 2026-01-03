@@ -5,44 +5,26 @@
 
 namespace WorldEditor::TerrainTools {
 
-// Brush types for terrain editing
-enum class BrushType : u8 {
-    Raise,      // Поднимает terrain
-    Lower,      // Опускает terrain
-    Flatten,    // Выравнивает до target height
-    Smooth,     // Сглаживает неровности
-    Noise,      // Добавляет процедурный шум
-    Erode       // Симуляция эрозии
-};
+// --- Tile-based Terrain (Dota 2 Workshop Tools style) ---
+// Terrain uses discrete height levels (multiples of `TerrainComponent::heightStep`)
+// on a regular grid. Rendering uses `heightmap` (float) derived from `heightLevels`.
 
-// Brush falloff patterns
-enum class FalloffType : u8 {
-    Linear,     // Линейное затухание
-    Smooth,     // Smooth step (3x^2 - 2x^3)
-    Gaussian,   // Гауссово распределение
-    Sharp       // Резкие границы
-};
+// Initialize terrain as a tile grid (creates/overwrites height buffers).
+void initTileTerrain(
+    TerrainComponent& terrain,
+    i32 tilesX = 128,
+    i32 tilesZ = 128,
+    f32 tileSize = 128.0f,
+    f32 heightStep = 128.0f
+);
 
-// Brush configuration
-struct BrushSettings {
-    BrushType type = BrushType::Raise;
-    FalloffType falloff = FalloffType::Gaussian;
-    float radius = 4.0f;        // world units
-    float strength = 6.0f;      // units per second
-    float targetHeight = 0.0f;  // for Flatten brush
-    float noiseScale = 1.0f;    // for Noise brush
-    float smoothFactor = 0.5f;  // for Smooth brush
-};
-
-// Noise generation parameters
-struct NoiseSettings {
-    float frequency = 0.1f;
-    float amplitude = 10.0f;
-    int octaves = 4;
-    float lacunarity = 2.0f;
-    float persistence = 0.5f;
-    int seed = 12345;
-};
+// Sync float heightmap from discrete heightLevels.
+// If `minAffected/maxAffected` are (0,0), syncs the whole map.
+void syncHeightmapFromLevels(
+    TerrainComponent& terrain,
+    const Vec2i& minAffected = Vec2i(0),
+    const Vec2i& maxAffected = Vec2i(0)
+);
 
 // Terrain modification result
 struct ModificationResult {
@@ -52,39 +34,39 @@ struct ModificationResult {
     size_t verticesChanged = 0;
 };
 
-// Core terrain modification functions
-class TerrainBrush {
-public:
-    static ModificationResult applyBrush(
-        TerrainComponent& terrain,
-        const Vec3& worldPos,
-        const BrushSettings& settings,
-        float deltaTime
-    );
+// Apply discrete tile height edits.
+ModificationResult applyTileLevelDeltaBrush(
+    TerrainComponent& terrain,
+    const Vec3& worldPos,
+    i32 deltaLevels,
+    i32 radiusTiles
+);
 
-    static ModificationResult generateNoise(
-        TerrainComponent& terrain,
-        const NoiseSettings& settings
-    );
+ModificationResult applyTileSetLevelBrush(
+    TerrainComponent& terrain,
+    const Vec3& worldPos,
+    i32 setLevel,
+    i32 radiusTiles
+);
 
-    static ModificationResult importHeightmap(
-        TerrainComponent& terrain,
-        const String& filePath
-    );
+// Enforce Dota-like cliff constraints: max |deltaLevels| between adjacent vertices.
+// Operates in-place on `heightLevels` and returns affected bounds.
+ModificationResult enforceCliffConstraints(
+    TerrainComponent& terrain,
+    const Vec2i& minAffected,
+    const Vec2i& maxAffected,
+    i32 maxDeltaLevels = 3
+);
 
-    static bool exportHeightmap(
-        const TerrainComponent& terrain,
-        const String& filePath,
-        bool normalize = true
-    );
+// Paint a ramp/path from start to end (vertex coords) by interpolating height levels along the line.
+// Also sets rampMask on tiles along the path.
+ModificationResult applyRampPath(
+    TerrainComponent& terrain,
+    const Vec3& worldStart,
+    const Vec3& worldEnd,
+    i32 widthTiles
+);
 
-    // Utility functions (public for TexturePainter)
-    static float calculateFalloff(float distance, float radius, FalloffType type);
-
-private:
-    static float sampleNoise(float x, float y, const NoiseSettings& settings);
-    static float smoothHeight(const TerrainComponent& terrain, int x, int y, float factor);
-};
 
 // Texture painting system for multi-layer terrain materials
 struct TextureLayer {

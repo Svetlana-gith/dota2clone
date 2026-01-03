@@ -1,53 +1,73 @@
-#include "World.h"
+#include "WorldLegacy.h"
 #include "CreepSystem.h"
-#include "CollisionSystem.h"
+#include "ProjectileSystem.h"
 #include "TowerSystem.h"
+#include "CreepSpawnSystem.h"
+#include "CollisionSystem.h"
+#include "HeroSystem.h"
 #include "../renderer/LightingSystem.h"
 #include "../renderer/WireframeGrid.h"
 #include "TerrainChunks.h"
 #include <d3d12.h>
 #include <d3dcompiler.h>
+#include <iostream>
 #include <map>
+#include <memory>
+#include <algorithm>
 
 namespace WorldEditor {
 
-World::World(ID3D12Device* device) : device_(device) {
+WorldLegacy::WorldLegacy(ID3D12Device* device) : device_(device) {
+    // Set world reference in entity manager
+    // entityManager_.setWorld(this); // WorldLegacy is deprecated
+    
     // Add render system
     addSystem(std::make_unique<RenderSystem>(entityManager_, device_));
+    
     // Add collision system
     {
         auto collisionSystem = std::make_unique<CollisionSystem>(entityManager_);
         System* systemPtr = collisionSystem.release();
         addSystem(UniquePtr<System>(systemPtr));
     }
-    // Add creep system (CreepSystem inherits from System)
-    {
-        auto creepSystem = std::make_unique<CreepSystem>(entityManager_);
-        creepSystem->setWorld(this);
-        System* systemPtr = creepSystem.release();
-        addSystem(UniquePtr<System>(systemPtr));
-    }
-    // Add tower system (TowerSystem inherits from System)
-    {
-        auto towerSystem = std::make_unique<TowerSystem>(entityManager_);
-        towerSystem->setWorld(this);
-        System* systemPtr = towerSystem.release();
-        addSystem(UniquePtr<System>(systemPtr));
-    }
+    
+    // Initialize core MOBA systems
+    addSystem(std::make_unique<CreepSystem>(entityManager_));
+    addSystem(std::make_unique<ProjectileSystem>(entityManager_));
+    addSystem(std::make_unique<TowerSystem>(entityManager_));
+    addSystem(std::make_unique<CreepSpawnSystem>(entityManager_));
+    
+    // Add Hero System
+    auto heroSystem = std::make_unique<HeroSystem>(entityManager_);
+    // heroSystem->setWorld(this); // WorldLegacy is deprecated
+    addSystem(std::move(heroSystem));
+    
     LOG_INFO("World initialized");
 }
 
-World::World() : device_(nullptr) {
-    // Default constructor for backward compatibility
-    // RenderSystem will be initialized later when device is available
+WorldLegacy::WorldLegacy() : device_(nullptr) {
+    // Set world reference in entity manager
+    // entityManager_.setWorld(this); // WorldLegacy is deprecated
+    
+    // Initialize core MOBA systems without DirectX device
+    addSystem(std::make_unique<CreepSystem>(entityManager_));
+    addSystem(std::make_unique<ProjectileSystem>(entityManager_));
+    addSystem(std::make_unique<TowerSystem>(entityManager_));
+    addSystem(std::make_unique<CreepSpawnSystem>(entityManager_));
+    
+    // Add Hero System
+    auto heroSystem = std::make_unique<HeroSystem>(entityManager_);
+    // heroSystem->setWorld(this); // WorldLegacy is deprecated
+    addSystem(std::move(heroSystem));
+    
     LOG_INFO("World initialized (device not available yet)");
 }
 
-World::~World() {
+WorldLegacy::~WorldLegacy() {
     LOG_INFO("World destroyed");
 }
 
-void World::addSystem(UniquePtr<System> system) {
+void WorldLegacy::addSystem(UniquePtr<System> system) {
     if (!system) return;
 
     String name = system->getName();
@@ -59,7 +79,7 @@ void World::addSystem(UniquePtr<System> system) {
     LOG_INFO("Added system: {}", name);
 }
 
-void World::removeSystem(const String& name) {
+void WorldLegacy::removeSystem(const String& name) {
     auto it = systems_.find(name);
     if (it != systems_.end()) {
         systems_.erase(it);
@@ -67,23 +87,28 @@ void World::removeSystem(const String& name) {
     }
 }
 
-System* World::getSystem(const String& name) {
+System* WorldLegacy::getSystem(const String& name) {
     auto it = systems_.find(name);
     return (it != systems_.end()) ? it->second.get() : nullptr;
 }
 
-void World::update(f32 deltaTime, bool gameModeActive) {
+const System* WorldLegacy::getSystem(const String& name) const {
+    auto it = systems_.find(name);
+    return (it != systems_.end()) ? it->second.get() : nullptr;
+}
+
+void WorldLegacy::update(f32 deltaTime, bool gameModeActive) {
     for (auto& pair : systems_) {
         // Only update game systems (like CreepSystem) when game mode is active
         String systemName = pair.second->getName();
-        if ((systemName == "CreepSystem" || systemName == "TowerSystem") && !gameModeActive) {
+        if (systemName == "CreepSystem" && !gameModeActive) {
             continue; // Skip CreepSystem when not in game mode
         }
         pair.second->update(deltaTime);
     }
 }
 
-void World::render(ID3D12GraphicsCommandList* commandList,
+void WorldLegacy::render(ID3D12GraphicsCommandList* commandList,
                    const Mat4& viewProjMatrix,
                    const Vec3& cameraPosition,
                    bool showPathLines) {
@@ -96,18 +121,18 @@ void World::render(ID3D12GraphicsCommandList* commandList,
     }
 }
 
-void World::clear() {
+void WorldLegacy::clear() {
     systems_.clear();
     entityManager_.clear();
     LOG_INFO("World cleared");
 }
 
-void World::clearEntities() {
+void WorldLegacy::clearEntities() {
     entityManager_.clear();
     LOG_INFO("World entities cleared");
 }
 
-size_t World::getEntityCount() const {
+size_t WorldLegacy::getEntityCount() const {
     return entityManager_.getEntityCount();
 }
 
@@ -182,10 +207,10 @@ void RenderSystem::render(ID3D12GraphicsCommandList* commandList,
 
     // Render all entities with Mesh and Transform components
     size_t renderedCount = 0;
-    entityManager_.forEach<WorldEditor::MeshComponent, WorldEditor::TransformComponent>(
+    entityManager_.forEach<MeshComponent, TransformComponent>(
         [this, commandList, &viewProjMatrix, &renderedCount](Entity entity,
-                                           WorldEditor::MeshComponent& mesh,
-                                           WorldEditor::TransformComponent& transform) {
+                                           MeshComponent& mesh,
+                                           TransformComponent& transform) {
             if (mesh.visible) {
                 ensureMeshBuffers(entity, mesh, commandList);
                 ensureConstantBuffers(entity, mesh, transform, viewProjMatrix, commandList);
@@ -199,14 +224,14 @@ void RenderSystem::render(ID3D12GraphicsCommandList* commandList,
     if (wireframeEnabled_ && wireframeGrid_) {
         // Find first terrain entity and render wireframe grid once
         bool wireframeRendered = false;
-        entityManager_.forEach<WorldEditor::TerrainComponent, WorldEditor::MeshComponent>(
+        entityManager_.forEach<TerrainComponent, MeshComponent>(
             [this, commandList, &viewProjMatrix, &cameraPosition, &wireframeRendered](Entity entity,
-                                               WorldEditor::TerrainComponent& terrain,
-                                               WorldEditor::MeshComponent& mesh) {
+                                               TerrainComponent& terrain,
+                                               MeshComponent& mesh) {
                 if (mesh.visible && !wireframeRendered) {
                     // Terrain mesh is transformed by TransformComponent during normal rendering; apply the same transform to wireframe grid.
-                    const Mat4 worldMatrix = entityManager_.hasComponent<WorldEditor::TransformComponent>(entity)
-                        ? entityManager_.getComponent<WorldEditor::TransformComponent>(entity).getMatrix()
+                    const Mat4 worldMatrix = entityManager_.hasComponent<TransformComponent>(entity)
+                        ? entityManager_.getComponent<TransformComponent>(entity).getMatrix()
                         : Mat4(1.0f);
                     wireframeGrid_->render(commandList, worldMatrix, viewProjMatrix, cameraPosition);
                     wireframeRendered = true;
@@ -622,7 +647,7 @@ bool RenderSystem::createPipelineState(ID3D12Device* device) {
 }
 
 // Mesh buffer management
-void RenderSystem::ensureMeshBuffers(Entity entity, WorldEditor::MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
+void RenderSystem::ensureMeshBuffers(Entity entity, MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
 #ifdef DIRECTX_RENDERER
     // Check if buffers are already created
     if (mesh.gpuBuffersCreated) {
@@ -660,7 +685,7 @@ void RenderSystem::ensureMeshBuffers(Entity entity, WorldEditor::MeshComponent& 
 #endif
 }
 
-bool RenderSystem::createVertexBuffer(WorldEditor::MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
+bool RenderSystem::createVertexBuffer(MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
 #ifdef DIRECTX_RENDERER
     if (!device_) {
         LOG_ERROR("Device not available for vertex buffer creation");
@@ -761,7 +786,7 @@ bool RenderSystem::createVertexBuffer(WorldEditor::MeshComponent& mesh, ID3D12Gr
     return false;
 }
 
-bool RenderSystem::createIndexBuffer(WorldEditor::MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
+bool RenderSystem::createIndexBuffer(MeshComponent& mesh, ID3D12GraphicsCommandList* commandList) {
 #ifdef DIRECTX_RENDERER
     if (!device_) {
         LOG_ERROR("Device not available for index buffer creation");
@@ -848,12 +873,12 @@ bool RenderSystem::createIndexBuffer(WorldEditor::MeshComponent& mesh, ID3D12Gra
 }
 
 void RenderSystem::renderMesh(ID3D12GraphicsCommandList* commandList,
-                             const WorldEditor::MeshComponent& mesh,
-                             const WorldEditor::TransformComponent& transform,
+                             const MeshComponent& mesh,
+                             const TransformComponent& transform,
                              const Mat4& viewProjMatrix) {
 #ifdef DIRECTX_RENDERER
     // Check if this mesh uses chunk system
-    auto& chunks = WorldEditor::TerrainChunks::getChunks(const_cast<WorldEditor::MeshComponent&>(mesh));
+    auto& chunks = TerrainChunks::getChunks(const_cast<MeshComponent&>(mesh));
     
     if (!chunks.empty()) {
         // Render using chunk system - inline implementation
@@ -1321,4 +1346,108 @@ void RenderSystem::createPathBuffers(const Vector<Vec3>& vertices, const Vector<
 #endif
 }
 
-} // namespace WorldEditor
+// MOBA Game Management
+void WorldLegacy::startGame() {
+    if (auto* spawnSystem = static_cast<CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        spawnSystem->startGame();
+    }
+    
+    // Create player hero if not exists
+    if (auto* heroSystem = static_cast<HeroSystem*>(getSystem("HeroSystem"))) {
+        if (heroSystem->getPlayerHero() == INVALID_ENTITY) {
+            // Find Radiant base for spawn position
+            Vec3 playerSpawnPos(50.0f, 1.0f, 50.0f); // Default position
+            Vec3 enemySpawnPos(-50.0f, 1.0f, -50.0f); // Default enemy position
+            
+            auto& registry = entityManager_.getRegistry();
+            auto baseView = registry.view<ObjectComponent, TransformComponent>();
+            for (auto entity : baseView) {
+                auto& obj = baseView.get<ObjectComponent>(entity);
+                auto& transform = baseView.get<TransformComponent>(entity);
+                if (obj.type == ObjectType::Base) {
+                    if (obj.teamId == 1) {
+                        playerSpawnPos = transform.position + Vec3(10.0f, 1.0f, 10.0f);
+                    } else if (obj.teamId == 2) {
+                        enemySpawnPos = transform.position + Vec3(-10.0f, 1.0f, -10.0f);
+                    }
+                }
+            }
+            
+            // Create Warrior hero for player (Team 1 - Radiant)
+            Entity playerHero = heroSystem->createHeroByType("Warrior", 1, playerSpawnPos);
+            heroSystem->setPlayerHero(playerHero);
+            
+            // Give starting items
+            heroSystem->giveItem(playerHero, HeroSystem::createItem_Tango());
+            heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
+            heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
+            
+            // Learn first ability
+            heroSystem->learnAbility(playerHero, 0);
+            
+            LOG_INFO("Player hero created at ({}, {}, {})", playerSpawnPos.x, playerSpawnPos.y, playerSpawnPos.z);
+            
+            // Create enemy AI hero (Team 2 - Dire)
+            Entity enemyHero = heroSystem->createHeroByType("Mage", 2, enemySpawnPos);
+            
+            // Mark as AI controlled (not player)
+            if (entityManager_.hasComponent<HeroComponent>(enemyHero)) {
+                auto& enemyComp = entityManager_.getComponent<HeroComponent>(enemyHero);
+                enemyComp.isPlayerControlled = false;
+                enemyComp.heroName = "Enemy Mage";
+                
+                // Give enemy some items too
+                heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
+                heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
+                
+                // Learn abilities
+                heroSystem->learnAbility(enemyHero, 0);
+                heroSystem->learnAbility(enemyHero, 1);
+            }
+            
+            LOG_INFO("Enemy AI hero created at ({}, {}, {})", enemySpawnPos.x, enemySpawnPos.y, enemySpawnPos.z);
+        }
+    }
+}
+
+void WorldLegacy::pauseGame() {
+    if (auto* spawnSystem = static_cast<CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        spawnSystem->pauseGame();
+    }
+}
+
+void WorldLegacy::resetGame() {
+    if (auto* spawnSystem = static_cast<CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        spawnSystem->resetGame();
+    }
+}
+
+bool WorldLegacy::isGameActive() const {
+    if (auto* spawnSystem = static_cast<const CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        return spawnSystem->isGameActive();
+    }
+    return false;
+}
+
+f32 WorldLegacy::getGameTime() const {
+    if (auto* spawnSystem = static_cast<const CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        return spawnSystem->getGameTime();
+    }
+    return 0.0f;
+}
+
+i32 WorldLegacy::getCurrentWave() const {
+    if (auto* spawnSystem = static_cast<const CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        return spawnSystem->getCurrentWave();
+    }
+    return 0;
+}
+
+f32 WorldLegacy::getTimeToNextWave() const {
+    if (auto* spawnSystem = static_cast<const CreepSpawnSystem*>(getSystem("CreepSpawnSystem"))) {
+        return spawnSystem->getTimeToNextWave();
+    }
+    return -1.0f;
+}
+
+}

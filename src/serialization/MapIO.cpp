@@ -3,6 +3,7 @@
 #include "world/World.h"
 #include "world/Components.h"
 #include "world/TerrainMesh.h"
+#include "world/TerrainTools.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -139,7 +140,21 @@ json terrainToJson(const TerrainComponent& t) {
     j["size"] = t.size;
     j["minHeight"] = t.minHeight;
     j["maxHeight"] = t.maxHeight;
-    j["heightmap"] = t.heightmap;
+
+    // Tile terrain (always tile-based now)
+    j["tileSize"] = t.tileSize;
+    j["heightStep"] = t.heightStep;
+    j["tilesX"] = t.tilesX;
+    j["tilesZ"] = t.tilesZ;
+    if (!t.heightLevels.empty()) {
+        j["heightLevels"] = t.heightLevels;
+    } else {
+        // Fallback for older saves / partially-initialized tile terrain.
+        j["heightmap"] = t.heightmap;
+    }
+    if (!t.rampMask.empty()) {
+        j["rampMask"] = t.rampMask;
+    }
     return j;
 }
 
@@ -151,10 +166,49 @@ bool jsonToTerrain(const json& j, TerrainComponent& t) {
     if (j.contains("size")) t.size = j["size"].get<float>();
     if (j.contains("minHeight")) t.minHeight = j["minHeight"].get<float>();
     if (j.contains("maxHeight")) t.maxHeight = j["maxHeight"].get<float>();
-    if (j.contains("heightmap") && j["heightmap"].is_array()) {
-        t.heightmap = j["heightmap"].get<Vector<f32>>();
+
+    // Always tile-based terrain now
+    if (j.contains("tileSize")) t.tileSize = j["tileSize"].get<float>();
+    if (j.contains("heightStep")) t.heightStep = j["heightStep"].get<float>();
+    if (j.contains("tilesX")) t.tilesX = j["tilesX"].get<i32>();
+    if (j.contains("tilesZ")) t.tilesZ = j["tilesZ"].get<i32>();
+
+    // If tilesX/Z are present, prefer deriving the terrain dimensions from them.
+    if (t.tilesX > 0 && t.tilesZ > 0) {
+        t.resolution = Vec2i(t.tilesX + 1, t.tilesZ + 1);
+        // Keep square size assumption (matches TerrainMesh).
+        t.size = static_cast<f32>(t.tilesX) * std::max(1.0f, t.tileSize);
     }
+
+    // Ensure buffers exist before filling.
     TerrainMesh::ensureHeightmap(t);
+
+    if (j.contains("heightLevels") && j["heightLevels"].is_array()) {
+        t.heightLevels = j["heightLevels"].get<Vector<i16>>();
+    } else if (j.contains("heightmap") && j["heightmap"].is_array()) {
+        // Back-compat: derive levels from float heightmap if only that exists.
+        t.heightmap = j["heightmap"].get<Vector<f32>>();
+        const int w = std::max(2, t.resolution.x);
+        const int h = std::max(2, t.resolution.y);
+        const size_t wanted = static_cast<size_t>(w) * static_cast<size_t>(h);
+        t.heightLevels.assign(wanted, static_cast<i16>(0));
+        const float step = std::max(1.0f, t.heightStep);
+        for (size_t i = 0; i < wanted && i < t.heightmap.size(); ++i) {
+            t.heightLevels[i] = static_cast<i16>(std::lround(t.heightmap[i] / step));
+        }
+    } else {
+        // Empty tile terrain: initialize to flat.
+        const int w = std::max(2, t.resolution.x);
+        const int h = std::max(2, t.resolution.y);
+        t.heightLevels.assign(static_cast<size_t>(w) * static_cast<size_t>(h), static_cast<i16>(0));
+    }
+
+    if (j.contains("rampMask") && j["rampMask"].is_array()) {
+        t.rampMask = j["rampMask"].get<Vector<u8>>();
+    }
+
+    // Rebuild float heightmap from discrete levels (also clamps to min/max).
+    WorldEditor::TerrainTools::syncHeightmapFromLevels(t);
     return true;
 }
 

@@ -5,10 +5,17 @@
 
 namespace WorldEditor {
 
+// Forward declaration
+class World;
+
 class EntityManager {
 public:
     EntityManager();
     ~EntityManager();
+
+    // World reference for systems
+    void setWorld(World* world) { world_ = world; }
+    World* getWorld() const { return world_; }
 
     // Entity management
     Entity createEntity(const String& name = "Entity");
@@ -77,6 +84,7 @@ public:
 
 private:
     Registry registry_;
+    World* world_ = nullptr;
 };
 
 }

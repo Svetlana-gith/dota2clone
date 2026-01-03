@@ -27,7 +27,7 @@ public:
 
     float fovDeg = 60.0f;
     float nearPlane = 0.1f;
-    float farPlane = 500.0f;
+    float farPlane = 50000.0f; // Increased for large tile terrains (up to 16384 units)
 
     // Projection mode. Ortho is useful for map editing (no perspective skew).
     bool orthographic = false;

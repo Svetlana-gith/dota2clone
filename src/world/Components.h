@@ -56,15 +56,32 @@ struct NameComponent {
     NameComponent(const String& name) : name(name) {}
 };
 
-// Terrain component
+// Terrain component - Tile-based terrain (Dota 2 Workshop Tools style)
 struct TerrainComponent {
+    // Tile-based terrain parameters (Dota 2 style)
+    f32 tileSize = 128.0f;   // tile width/height in world units
+    f32 heightStep = 128.0f; // height delta per level in world units
+    i32 tilesX = 128;        // tile count X (resolution.x = tilesX+1)
+    i32 tilesZ = 128;        // tile count Z (resolution.y = tilesZ+1)
+    
+    // Derived from tiles: resolution = (tilesX+1, tilesZ+1), size = tilesX * tileSize
+    Vec2i resolution = Vec2i(129, 129);
+    f32 size = 16384.0f; // tilesX * tileSize
+    
+    // Height range (derived from heightStep)
+    f32 minHeight = 0.0f;
+    f32 maxHeight = 15.0f * heightStep; // 15 steps above base
+
+    // Discrete per-vertex height levels (resolution.x * resolution.y).
+    // Height in world units: heightmap[i] == heightLevels[i] * heightStep.
+    Vector<i16> heightLevels;
+
+    // Float heightmap for rendering (derived from heightLevels via syncHeightmapFromLevels).
     Vector<f32> heightmap;
-    Vec2i resolution = Vec2i(256, 256);
-    f32 size = 100.0f; // world units
-    // Height range for editing and quick raycast rejection.
-    // Keep these consistent with how sculpt clamps heights.
-    f32 minHeight = -50.0f;
-    f32 maxHeight = 50.0f;
+
+    // Optional metadata for ramps/paths (per-tile: tilesX * tilesZ).
+    // 0 = none, 1 = ramp/path tile.
+    Vector<u8> rampMask;
 
     f32 getHeightAt(i32 x, i32 y) const {
         if (x < 0 || x >= resolution.x || y < 0 || y >= resolution.y) {
@@ -250,9 +267,11 @@ struct CreepComponent {
     f32 targetSearchCooldown = 0.0f; // Seconds until next full target scan
     f32 pathCheckCooldown = 0.0f;    // Seconds until next path-clear check
     bool lastPathClear = true;       // Cached result from last path check
+    f32 waypointStuckTime = 0.0f;    // Time stuck at current waypoint (to detect circling)
     
     // Spawn info
     Entity spawnPoint = INVALID_ENTITY; // CreepSpawn entity that spawned this creep
+    i32 formationIndex = 0; // Index in wave formation for spacing
     
     CreepComponent() = default;
     CreepComponent(i32 team, CreepLane laneType) : teamId(team), lane(laneType) {}

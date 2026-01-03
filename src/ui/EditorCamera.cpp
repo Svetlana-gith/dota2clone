@@ -45,7 +45,7 @@ void EditorCamera::reset() {
     mouseSensitivity = 0.15f;
     fovDeg = 60.0f;
     nearPlane = 0.1f;
-    farPlane = 500.0f;
+    farPlane = 50000.0f; // Increased for large tile terrains (up to 16384 units)
     orthographic = false;
     orthoHalfHeight = 50.0f;
     lockTopDown = false;

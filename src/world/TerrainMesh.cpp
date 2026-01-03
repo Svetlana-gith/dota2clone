@@ -1,4 +1,5 @@
 #include "TerrainMesh.h"
+#include "TerrainTools.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,14 +7,8 @@
 namespace WorldEditor::TerrainMesh {
 
 void ensureHeightmap(TerrainComponent& terrain) {
-    const int w = std::max(2, terrain.resolution.x);
-    const int h = std::max(2, terrain.resolution.y);
-    terrain.resolution = Vec2i(w, h);
-
-    const size_t wanted = static_cast<size_t>(w) * static_cast<size_t>(h);
-    if (terrain.heightmap.size() != wanted) {
-        terrain.heightmap.assign(wanted, 0.0f);
-    }
+    // Terrain is always tile-based now - sync heightmap from heightLevels
+    WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain);
 }
 
 static inline size_t idx(int x, int y, int w) {

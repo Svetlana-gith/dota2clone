@@ -2,6 +2,8 @@
 #include "world/World.h"
 #include "world/EntityManager.h"
 #include "world/CreepSystem.h"
+#include "world/CreepSpawnSystem.h"
+#include "world/HeroSystem.h"
 #include "ui/EditorCamera.h"
 #include "core/MathUtils.h"
 #include <spdlog/spdlog.h>
@@ -27,6 +29,11 @@ void GameMode::draw(World& world) {
     
     // Time controls
     drawTimeControls();
+
+    // Visual options
+    ImGui::Checkbox("Show Tower Range", &showTowerRange_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Show Ability Indicators", &showAbilityIndicators_);
 
     // Stop & reset (clears runtime units/projectiles and resets stats/time)
     if (ImGui::Button("Stop & Reset")) {
@@ -116,8 +123,8 @@ void GameMode::stopAndReset(World& world) {
     }
 
     // Reset creep simulation timers (so first wave starts cleanly after restart)
-    if (auto* cs = static_cast<CreepSystem*>(world.getSystem("CreepSystem"))) {
-        cs->resetSimulation();
+    if (auto* cs = dynamic_cast<CreepSpawnSystem*>(world.getSystem("CreepSpawnSystem"))) {
+        cs->resetGame();
     }
 
     // Finally disable game mode
@@ -443,30 +450,130 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
     auto& reg = world.getEntityManager().getRegistry();
     // Use foreground draw list to draw on top of everything
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
-
-    // Clip to viewport so UI overlays don't draw outside the viewport.
+    
+    // IMPORTANT: Clip all drawing to viewport bounds
     const ImVec2 clipMin = viewportRectMin;
     const ImVec2 clipMax = ImVec2(viewportRectMin.x + viewportSize.x, viewportRectMin.y + viewportSize.y);
     drawList->PushClipRect(clipMin, clipMax, true);
-
+    
+    // Lambda for world-to-screen projection
     auto project = [&](const Vec3& worldPos, Vec2& outScreen) -> bool {
         const Vec4 clip = viewProj * Vec4(worldPos, 1.0f);
-        // Behind camera or invalid.
-        if (clip.w <= 0.0001f || !std::isfinite(clip.w)) {
-            return false;
-        }
+        if (clip.w <= 0.0001f || !std::isfinite(clip.w)) return false;
         const Vec3 ndc = Vec3(clip) / clip.w;
-        // D3D depth range is [0..1] with *_ZO projections.
-        if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y) || !std::isfinite(ndc.z)) {
-            return false;
-        }
-        if (ndc.z < 0.0f || ndc.z > 1.0f) {
-            return false;
-        }
-        outScreen.x = (ndc.x + 1.0f) * 0.5f * viewportSize.x;
-        outScreen.y = (1.0f - ndc.y) * 0.5f * viewportSize.y;
+        if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y) || !std::isfinite(ndc.z)) return false;
+        if (ndc.z < 0.0f || ndc.z > 1.0f) return false;
+        outScreen.x = (ndc.x + 1.0f) * 0.5f * viewportSize.x + viewportRectMin.x;
+        outScreen.y = (1.0f - ndc.y) * 0.5f * viewportSize.y + viewportRectMin.y;
         return true;
     };
+    
+    // Helper to check if screen position is inside viewport
+    auto isInViewport = [&](const Vec2& screenPos) -> bool {
+        return screenPos.x >= clipMin.x && screenPos.x <= clipMax.x &&
+               screenPos.y >= clipMin.y && screenPos.y <= clipMax.y;
+    };
+    
+    // Draw tower attack range circles
+    if (showTowerRange_) {
+        auto towerView = reg.view<ObjectComponent, TransformComponent>();
+        for (auto entity : towerView) {
+            const auto& obj = towerView.get<ObjectComponent>(entity);
+            if (obj.type != ObjectType::Tower) continue;
+            
+            const auto& transform = towerView.get<TransformComponent>(entity);
+            
+            // Draw range circle on ground
+            const int segments = 32;
+            const f32 range = obj.attackRange;
+            ImU32 rangeColor = (obj.teamId == 1) ? IM_COL32(50, 200, 50, 80) : IM_COL32(200, 50, 50, 80);
+            
+            for (int i = 0; i < segments; i++) {
+                f32 a1 = (f32)i / segments * 2.0f * 3.14159f;
+                f32 a2 = (f32)(i + 1) / segments * 2.0f * 3.14159f;
+                
+                Vec3 p1 = transform.position + Vec3(std::cos(a1) * range, 0.1f, std::sin(a1) * range);
+                Vec3 p2 = transform.position + Vec3(std::cos(a2) * range, 0.1f, std::sin(a2) * range);
+                
+                Vec2 s1, s2;
+                if (project(p1, s1) && project(p2, s2)) {
+                    drawList->AddLine(ImVec2(s1.x, s1.y), ImVec2(s2.x, s2.y), rangeColor, 2.0f);
+                }
+            }
+        }
+    }
+    
+    // Draw hero HP/MP bars and ability indicators
+    auto heroView = reg.view<HeroComponent, TransformComponent>();
+    for (auto entity : heroView) {
+        const auto& hero = heroView.get<HeroComponent>(entity);
+        const auto& transform = heroView.get<TransformComponent>(entity);
+        
+        if (hero.state == HeroState::Dead) continue;
+        
+        Vec3 barPos = transform.position + Vec3(0.0f, 4.0f, 0.0f);
+        Vec2 screenPos;
+        if (!project(barPos, screenPos)) continue;
+        
+        // Hero name
+        ImVec2 nameSize = ImGui::CalcTextSize(hero.heroName.c_str());
+        drawList->AddText(ImVec2(screenPos.x - nameSize.x * 0.5f, screenPos.y - 40), 
+            IM_COL32(255, 255, 255, 255), hero.heroName.c_str());
+        
+        // HP bar (larger for heroes)
+        const f32 barWidth = 80.0f;
+        const f32 barHeight = 10.0f;
+        f32 hpPct = hero.maxHealth > 0 ? hero.currentHealth / hero.maxHealth : 0;
+        hpPct = std::clamp(hpPct, 0.0f, 1.0f);
+        
+        ImVec2 hpMin(screenPos.x - barWidth * 0.5f, screenPos.y - 25);
+        ImVec2 hpMax(screenPos.x + barWidth * 0.5f, screenPos.y - 25 + barHeight);
+        drawList->AddRectFilled(hpMin, hpMax, IM_COL32(0, 0, 0, 200));
+        drawList->AddRectFilled(hpMin, ImVec2(hpMin.x + barWidth * hpPct, hpMax.y), 
+            IM_COL32((u8)(255 * (1 - hpPct)), (u8)(255 * hpPct), 0, 255));
+        drawList->AddRect(hpMin, hpMax, IM_COL32(255, 255, 255, 255));
+        
+        // MP bar (blue, smaller)
+        f32 mpPct = hero.maxMana > 0 ? hero.currentMana / hero.maxMana : 0;
+        mpPct = std::clamp(mpPct, 0.0f, 1.0f);
+        
+        ImVec2 mpMin(screenPos.x - barWidth * 0.5f, screenPos.y - 12);
+        ImVec2 mpMax(screenPos.x + barWidth * 0.5f, screenPos.y - 12 + 6);
+        drawList->AddRectFilled(mpMin, mpMax, IM_COL32(0, 0, 0, 200));
+        drawList->AddRectFilled(mpMin, ImVec2(mpMin.x + barWidth * mpPct, mpMax.y), 
+            IM_COL32(50, 100, 200, 255));
+        
+        // Level indicator
+        char lvlText[16];
+        snprintf(lvlText, sizeof(lvlText), "Lv%d", hero.level);
+        drawList->AddText(ImVec2(screenPos.x - barWidth * 0.5f - 25, screenPos.y - 25), 
+            IM_COL32(255, 215, 0, 255), lvlText);
+        
+        // Draw ability range indicator if casting
+        if (hero.currentCastingAbility >= 0 && hero.currentCastingAbility < 6) {
+            const auto& ability = hero.abilities[hero.currentCastingAbility];
+            if (ability.data.radius > 0) {
+                // Draw AoE indicator
+                const int segs = 24;
+                f32 r = ability.data.radius;
+                Vec3 center = hero.targetPosition;
+                
+                for (int i = 0; i < segs; i++) {
+                    f32 a1 = (f32)i / segs * 2.0f * 3.14159f;
+                    f32 a2 = (f32)(i + 1) / segs * 2.0f * 3.14159f;
+                    
+                    Vec3 p1 = center + Vec3(std::cos(a1) * r, 0.2f, std::sin(a1) * r);
+                    Vec3 p2 = center + Vec3(std::cos(a2) * r, 0.2f, std::sin(a2) * r);
+                    
+                    Vec2 s1, s2;
+                    if (project(p1, s1) && project(p2, s2)) {
+                        drawList->AddLine(ImVec2(s1.x, s1.y), ImVec2(s2.x, s2.y), 
+                            IM_COL32(255, 100, 100, 200), 2.0f);
+                    }
+                }
+            }
+        }
+    }
     
     // Draw HP bars for creeps
     auto creepView = reg.view<CreepComponent, TransformComponent>();
@@ -474,58 +581,24 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
         const auto& creep = creepView.get<CreepComponent>(entity);
         const auto& transform = creepView.get<TransformComponent>(entity);
         
-        if (creep.state == CreepState::Dead) {
-            continue;
-        }
+        if (creep.state == CreepState::Dead) continue;
         
-        // Position bar above unit
         Vec3 barPosition = transform.position + Vec3(0.0f, 3.0f, 0.0f);
         Vec2 screenPos;
-        if (!project(barPosition, screenPos)) {
-            continue;
-        }
-        
-        // Convert to screen coordinates (add viewport offset)
-        screenPos.x += viewportRectMin.x;
-        screenPos.y += viewportRectMin.y;
-        
-        // Skip if behind camera or outside viewport
-        if (screenPos.x < viewportRectMin.x - 100.0f || screenPos.x > viewportRectMin.x + viewportSize.x + 100.0f ||
-            screenPos.y < viewportRectMin.y - 100.0f || screenPos.y > viewportRectMin.y + viewportSize.y + 100.0f) {
-            continue;
-        }
+        if (!project(barPosition, screenPos)) continue;
         
         // Bar dimensions
         const f32 barWidth = 60.0f;
         const f32 barHeight = 8.0f;
-        const f32 barOffsetY = -barHeight - 2.0f;
         
-        // Background bar (black outline)
-        ImVec2 barMin(screenPos.x - barWidth * 0.5f, screenPos.y + barOffsetY);
-        ImVec2 barMax(screenPos.x + barWidth * 0.5f, screenPos.y + barOffsetY + barHeight);
+        ImVec2 barMin(screenPos.x - barWidth * 0.5f, screenPos.y - barHeight - 2);
+        ImVec2 barMax(screenPos.x + barWidth * 0.5f, screenPos.y - 2);
         drawList->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 200));
         
-        // HP bar (red to green gradient)
-        f32 hpPercent = (creep.maxHealth > 0.0001f) ? (creep.currentHealth / creep.maxHealth) : 0.0f;
-        hpPercent = std::clamp(hpPercent, 0.0f, 1.0f);
-        ImU32 hpColor = IM_COL32(
-            static_cast<u8>(255.0f * (1.0f - hpPercent)),
-            static_cast<u8>(255.0f * hpPercent),
-            0,
-            255
-        );
-        ImVec2 hpMax(barMin.x + barWidth * hpPercent, barMax.y);
-        drawList->AddRectFilled(barMin, hpMax, hpColor);
-        
-        // Border
-        drawList->AddRect(barMin, barMax, IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f);
-        
-        // HP text
-        char hpText[32];
-        snprintf(hpText, sizeof(hpText), "%.0f/%.0f", creep.currentHealth, creep.maxHealth);
-        ImVec2 textSize = ImGui::CalcTextSize(hpText);
-        ImVec2 textPos(screenPos.x - textSize.x * 0.5f, screenPos.y + barOffsetY - textSize.y - 2.0f);
-        drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), hpText);
+        f32 hpPct = std::clamp(creep.currentHealth / creep.maxHealth, 0.0f, 1.0f);
+        ImU32 hpColor = IM_COL32((u8)(255 * (1 - hpPct)), (u8)(255 * hpPct), 0, 255);
+        drawList->AddRectFilled(barMin, ImVec2(barMin.x + barWidth * hpPct, barMax.y), hpColor);
+        drawList->AddRect(barMin, barMax, IM_COL32(255, 255, 255, 255));
     }
     
     // Draw HP bars for towers and buildings
@@ -534,73 +607,213 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
         const auto& objComp = objectView.get<ObjectComponent>(entity);
         const auto& transform = objectView.get<TransformComponent>(entity);
         
-        // Only show bars for towers, buildings, and bases
-        if (objComp.type != ObjectType::Tower && 
-            objComp.type != ObjectType::Building && 
-            objComp.type != ObjectType::Base) {
+        if (objComp.type != ObjectType::Tower && objComp.type != ObjectType::Building && objComp.type != ObjectType::Base)
             continue;
-        }
         
-        if (!reg.all_of<HealthComponent>(entity)) {
-            continue;
-        }
-        
+        if (!reg.all_of<HealthComponent>(entity)) continue;
         const auto& health = reg.get<HealthComponent>(entity);
-        if (health.isDead) {
-            continue;
-        }
+        if (health.isDead) continue;
         
-        // Position bar above building
         Vec3 barPosition = transform.position + Vec3(0.0f, 8.0f, 0.0f);
         Vec2 screenPos;
-        if (!project(barPosition, screenPos)) {
-            continue;
-        }
+        if (!project(barPosition, screenPos)) continue;
         
-        // Convert to screen coordinates (add viewport offset)
-        screenPos.x += viewportRectMin.x;
-        screenPos.y += viewportRectMin.y;
-        
-        // Skip if behind camera or outside viewport
-        if (screenPos.x < viewportRectMin.x - 100.0f || screenPos.x > viewportRectMin.x + viewportSize.x + 100.0f ||
-            screenPos.y < viewportRectMin.y - 100.0f || screenPos.y > viewportRectMin.y + viewportSize.y + 100.0f) {
-            continue;
-        }
-        
-        // Bar dimensions (larger for buildings)
         const f32 barWidth = 80.0f;
         const f32 barHeight = 10.0f;
-        const f32 barOffsetY = -barHeight - 2.0f;
         
-        // Background bar (black outline)
-        ImVec2 barMin(screenPos.x - barWidth * 0.5f, screenPos.y + barOffsetY);
-        ImVec2 barMax(screenPos.x + barWidth * 0.5f, screenPos.y + barOffsetY + barHeight);
+        ImVec2 barMin(screenPos.x - barWidth * 0.5f, screenPos.y - barHeight - 2);
+        ImVec2 barMax(screenPos.x + barWidth * 0.5f, screenPos.y - 2);
         drawList->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 200));
         
-        // HP bar (red to green gradient)
-        f32 hpPercent = (health.maxHealth > 0.0001f) ? (health.currentHealth / health.maxHealth) : 0.0f;
-        hpPercent = std::clamp(hpPercent, 0.0f, 1.0f);
-        ImU32 hpColor = IM_COL32(
-            static_cast<u8>(255.0f * (1.0f - hpPercent)),
-            static_cast<u8>(255.0f * hpPercent),
-            0,
-            255
-        );
-        ImVec2 hpMax(barMin.x + barWidth * hpPercent, barMax.y);
-        drawList->AddRectFilled(barMin, hpMax, hpColor);
-        
-        // Border
-        drawList->AddRect(barMin, barMax, IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f);
+        f32 hpPct = std::clamp(health.currentHealth / health.maxHealth, 0.0f, 1.0f);
+        ImU32 hpColor = IM_COL32((u8)(255 * (1 - hpPct)), (u8)(255 * hpPct), 0, 255);
+        drawList->AddRectFilled(barMin, ImVec2(barMin.x + barWidth * hpPct, barMax.y), hpColor);
+        drawList->AddRect(barMin, barMax, IM_COL32(255, 255, 255, 255));
         
         // HP text
         char hpText[32];
         snprintf(hpText, sizeof(hpText), "%.0f/%.0f", health.currentHealth, health.maxHealth);
         ImVec2 textSize = ImGui::CalcTextSize(hpText);
-        ImVec2 textPos(screenPos.x - textSize.x * 0.5f, screenPos.y + barOffsetY - textSize.y - 2.0f);
-        drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), hpText);
+        drawList->AddText(ImVec2(screenPos.x - textSize.x * 0.5f, screenPos.y - barHeight - textSize.y - 4), 
+            IM_COL32(255, 255, 255, 255), hpText);
     }
-
+    
+    // Pop clip rect at the end
     drawList->PopClipRect();
+}
+
+void GameMode::drawTopBar(World& world, const Vec2& viewportSize, const ImVec2& viewportRectMin) {
+    if (!gameModeActive_) {
+        return;
+    }
+    
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    
+    // Top bar dimensions
+    const f32 barHeight = 45.0f;
+    const f32 portraitSize = 38.0f;
+    const f32 portraitSpacing = 5.0f;
+    const f32 timeBoxWidth = 80.0f;
+    const i32 slotsPerTeam = 5;
+    
+    // Calculate positions
+    const f32 centerX = viewportRectMin.x + viewportSize.x * 0.5f;
+    const f32 topY = viewportRectMin.y + 5.0f;
+    
+    // Draw background bar
+    ImVec2 barMin(viewportRectMin.x, topY);
+    ImVec2 barMax(viewportRectMin.x + viewportSize.x, topY + barHeight);
+    drawList->AddRectFilled(barMin, barMax, IM_COL32(20, 20, 25, 220));
+    drawList->AddLine(ImVec2(barMin.x, barMax.y), ImVec2(barMax.x, barMax.y), IM_COL32(60, 60, 70, 255), 2.0f);
+    
+    // Draw time in center
+    i32 minutes = static_cast<i32>(stats_.gameTime) / 60;
+    i32 seconds = static_cast<i32>(stats_.gameTime) % 60;
+    char timeText[16];
+    snprintf(timeText, sizeof(timeText), "%02d:%02d", minutes, seconds);
+    
+    ImVec2 timeBoxMin(centerX - timeBoxWidth * 0.5f, topY + 3);
+    ImVec2 timeBoxMax(centerX + timeBoxWidth * 0.5f, topY + barHeight - 3);
+    drawList->AddRectFilled(timeBoxMin, timeBoxMax, IM_COL32(40, 40, 50, 255));
+    drawList->AddRect(timeBoxMin, timeBoxMax, IM_COL32(80, 80, 100, 255), 0, 0, 2.0f);
+    
+    ImVec2 timeTextSize = ImGui::CalcTextSize(timeText);
+    drawList->AddText(ImVec2(centerX - timeTextSize.x * 0.5f, topY + (barHeight - timeTextSize.y) * 0.5f),
+        IM_COL32(255, 255, 255, 255), timeText);
+    
+    // Collect heroes by team
+    auto& reg = world.getEntityManager().getRegistry();
+    auto heroView = reg.view<HeroComponent, TransformComponent>();
+    
+    Vector<Entity> radiantHeroes;  // Team 1
+    Vector<Entity> direHeroes;     // Team 2
+    
+    for (auto entity : heroView) {
+        const auto& hero = heroView.get<HeroComponent>(entity);
+        if (hero.teamId == 1) {
+            radiantHeroes.push_back(entity);
+        } else if (hero.teamId == 2) {
+            direHeroes.push_back(entity);
+        }
+    }
+    
+    // Draw Radiant (left side) - green tint
+    f32 radiantStartX = centerX - timeBoxWidth * 0.5f - 20.0f - (slotsPerTeam * (portraitSize + portraitSpacing));
+    
+    for (i32 i = 0; i < slotsPerTeam; i++) {
+        f32 slotX = radiantStartX + i * (portraitSize + portraitSpacing);
+        f32 slotY = topY + (barHeight - portraitSize) * 0.5f;
+        
+        ImVec2 slotMin(slotX, slotY);
+        ImVec2 slotMax(slotX + portraitSize, slotY + portraitSize);
+        
+        if (i < static_cast<i32>(radiantHeroes.size())) {
+            Entity heroEntity = radiantHeroes[i];
+            const auto& hero = reg.get<HeroComponent>(heroEntity);
+            
+            bool isDead = (hero.state == HeroState::Dead);
+            
+            // Portrait background
+            ImU32 bgColor = isDead ? IM_COL32(40, 40, 40, 255) : IM_COL32(30, 80, 30, 255);
+            drawList->AddRectFilled(slotMin, slotMax, bgColor);
+            
+            // HP bar under portrait
+            f32 hpPct = hero.maxHealth > 0 ? std::clamp(hero.currentHealth / hero.maxHealth, 0.0f, 1.0f) : 0;
+            ImVec2 hpMin(slotX, slotY + portraitSize - 4);
+            ImVec2 hpMax(slotX + portraitSize, slotY + portraitSize);
+            drawList->AddRectFilled(hpMin, hpMax, IM_COL32(0, 0, 0, 200));
+            drawList->AddRectFilled(hpMin, ImVec2(hpMin.x + portraitSize * hpPct, hpMax.y), 
+                IM_COL32(50, 200, 50, 255));
+            
+            // Hero initial/icon
+            char heroInitial[4];
+            snprintf(heroInitial, sizeof(heroInitial), "%c", hero.heroName.empty() ? '?' : hero.heroName[0]);
+            ImVec2 textSize = ImGui::CalcTextSize(heroInitial);
+            drawList->AddText(ImVec2(slotX + (portraitSize - textSize.x) * 0.5f, 
+                slotY + (portraitSize - textSize.y) * 0.5f - 2),
+                isDead ? IM_COL32(100, 100, 100, 255) : IM_COL32(255, 255, 255, 255), heroInitial);
+            
+            // Death timer overlay
+            if (isDead && hero.respawnTimer > 0) {
+                // Dark overlay
+                drawList->AddRectFilled(slotMin, slotMax, IM_COL32(0, 0, 0, 180));
+                
+                // Respawn timer
+                char timerText[8];
+                snprintf(timerText, sizeof(timerText), "%.0f", hero.respawnTimer);
+                ImVec2 timerSize = ImGui::CalcTextSize(timerText);
+                drawList->AddText(ImVec2(slotX + (portraitSize - timerSize.x) * 0.5f,
+                    slotY + (portraitSize - timerSize.y) * 0.5f),
+                    IM_COL32(255, 80, 80, 255), timerText);
+            }
+            
+            // Border
+            drawList->AddRect(slotMin, slotMax, IM_COL32(50, 150, 50, 255), 0, 0, 2.0f);
+        } else {
+            // Empty slot
+            drawList->AddRectFilled(slotMin, slotMax, IM_COL32(30, 35, 30, 200));
+            drawList->AddRect(slotMin, slotMax, IM_COL32(50, 60, 50, 150), 0, 0, 1.0f);
+        }
+    }
+    
+    // Draw Dire (right side) - red tint
+    f32 direStartX = centerX + timeBoxWidth * 0.5f + 20.0f;
+    
+    for (i32 i = 0; i < slotsPerTeam; i++) {
+        f32 slotX = direStartX + i * (portraitSize + portraitSpacing);
+        f32 slotY = topY + (barHeight - portraitSize) * 0.5f;
+        
+        ImVec2 slotMin(slotX, slotY);
+        ImVec2 slotMax(slotX + portraitSize, slotY + portraitSize);
+        
+        if (i < static_cast<i32>(direHeroes.size())) {
+            Entity heroEntity = direHeroes[i];
+            const auto& hero = reg.get<HeroComponent>(heroEntity);
+            
+            bool isDead = (hero.state == HeroState::Dead);
+            
+            // Portrait background
+            ImU32 bgColor = isDead ? IM_COL32(40, 40, 40, 255) : IM_COL32(80, 30, 30, 255);
+            drawList->AddRectFilled(slotMin, slotMax, bgColor);
+            
+            // HP bar under portrait
+            f32 hpPct = hero.maxHealth > 0 ? std::clamp(hero.currentHealth / hero.maxHealth, 0.0f, 1.0f) : 0;
+            ImVec2 hpMin(slotX, slotY + portraitSize - 4);
+            ImVec2 hpMax(slotX + portraitSize, slotY + portraitSize);
+            drawList->AddRectFilled(hpMin, hpMax, IM_COL32(0, 0, 0, 200));
+            drawList->AddRectFilled(hpMin, ImVec2(hpMin.x + portraitSize * hpPct, hpMax.y), 
+                IM_COL32(200, 50, 50, 255));
+            
+            // Hero initial/icon
+            char heroInitial[4];
+            snprintf(heroInitial, sizeof(heroInitial), "%c", hero.heroName.empty() ? '?' : hero.heroName[0]);
+            ImVec2 textSize = ImGui::CalcTextSize(heroInitial);
+            drawList->AddText(ImVec2(slotX + (portraitSize - textSize.x) * 0.5f, 
+                slotY + (portraitSize - textSize.y) * 0.5f - 2),
+                isDead ? IM_COL32(100, 100, 100, 255) : IM_COL32(255, 255, 255, 255), heroInitial);
+            
+            // Death timer overlay
+            if (isDead && hero.respawnTimer > 0) {
+                // Dark overlay
+                drawList->AddRectFilled(slotMin, slotMax, IM_COL32(0, 0, 0, 180));
+                
+                // Respawn timer
+                char timerText[8];
+                snprintf(timerText, sizeof(timerText), "%.0f", hero.respawnTimer);
+                ImVec2 timerSize = ImGui::CalcTextSize(timerText);
+                drawList->AddText(ImVec2(slotX + (portraitSize - timerSize.x) * 0.5f,
+                    slotY + (portraitSize - timerSize.y) * 0.5f),
+                    IM_COL32(255, 80, 80, 255), timerText);
+            }
+            
+            // Border
+            drawList->AddRect(slotMin, slotMax, IM_COL32(150, 50, 50, 255), 0, 0, 2.0f);
+        } else {
+            // Empty slot
+            drawList->AddRectFilled(slotMin, slotMax, IM_COL32(35, 30, 30, 200));
+            drawList->AddRect(slotMin, slotMax, IM_COL32(60, 50, 50, 150), 0, 0, 1.0f);
+        }
+    }
 }
 
 } // namespace WorldEditor

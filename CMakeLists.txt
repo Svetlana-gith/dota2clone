@@ -101,6 +101,50 @@ FetchContent_Declare(
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
 
+# Catch2 for testing
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG v3.5.0
+)
+FetchContent_MakeAvailable(Catch2)
+
+# SQLite3 amalgamation
+FetchContent_Declare(
+    sqlite3
+    URL https://www.sqlite.org/2024/sqlite-amalgamation-3450100.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(sqlite3)
+
+# Create SQLite3 library
+if(NOT TARGET sqlite3_lib)
+    add_library(sqlite3_lib STATIC
+        ${sqlite3_SOURCE_DIR}/sqlite3.c
+    )
+    target_include_directories(sqlite3_lib PUBLIC ${sqlite3_SOURCE_DIR})
+    target_compile_definitions(sqlite3_lib PRIVATE 
+        SQLITE_ENABLE_COLUMN_METADATA
+        SQLITE_ENABLE_FTS5
+        SQLITE_ENABLE_RTREE
+    )
+    if(WIN32)
+        target_compile_definitions(sqlite3_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+endif()
+
+# BCrypt library (custom implementation)
+if(NOT TARGET bcrypt_lib)
+    add_library(bcrypt_lib STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/bcrypt/bcrypt_hash.cpp
+    )
+    target_include_directories(bcrypt_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/bcrypt)
+    if(WIN32)
+        target_link_libraries(bcrypt_lib PUBLIC bcrypt)
+        target_compile_definitions(bcrypt_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+endif()
+
 # ImGui Docking (editor needs DockSpace API; it's only available in docking branch).
 # We use a separate FetchContent name to avoid reusing any previously populated imgui-src.
 FetchContent_Declare(
@@ -156,13 +200,15 @@ include_directories(
 add_subdirectory(src)
 add_subdirectory(tests)
 
-# Main executable
+# Main executable (Editor)
 add_executable(${PROJECT_NAME}
     src/main.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
     world_editor_core
+    world_editor_common
+    world_editor_server
     world_editor_world
     world_editor_renderer
     world_editor_ui
@@ -172,7 +218,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # Install targets
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS ${PROJECT_NAME} Game
     RUNTIME DESTINATION bin
 )
 

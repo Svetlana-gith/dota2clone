@@ -1,0 +1,27 @@
+# Authentication System Library
+
+add_library(world_editor_auth STATIC
+    DatabaseManager.cpp
+    SecurityManager.cpp
+    AuthProtocol.cpp
+    AuthServer.cpp
+    AuthClient.cpp
+)
+
+target_include_directories(world_editor_auth
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+target_link_libraries(world_editor_auth
+    PUBLIC
+        world_editor_core
+        spdlog::spdlog
+        sqlite3_lib
+        bcrypt_lib
+)
+
+# Link Windows BCrypt API and Winsock
+if(WIN32)
+    target_link_libraries(world_editor_auth PUBLIC bcrypt ws2_32)
+endif()

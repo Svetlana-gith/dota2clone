@@ -197,8 +197,13 @@ void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
 }
 
 void DirectXRenderer::Shutdown() {
+    // Make shutdown safe to call multiple times.
+    if (m_isShutdown) {
+        return;
+    }
+    m_isShutdown = true;
     if (!m_device) {
-        return; // Already shut down
+        return;
     }
 
     try {
@@ -228,8 +233,43 @@ void DirectXRenderer::Shutdown() {
         m_fenceEvent = nullptr;
     }
 
-    // Освобождаем ресурсы (ComPtr сделает это автоматически)
-    // Но теперь мы уверены, что GPU их не использует
+    // Release CPU-side references deterministically (ComPtr would do it in destructor too,
+    // but doing it here avoids "half-shutdown" states and makes repeated Shutdown() cheap).
+    m_wireframeGrid.reset();
+    m_skyRenderer.reset();
+    m_shadowMapping.reset();
+    m_lightingSystem.reset();
+
+    m_deferredReleases.clear();
+    m_renderTargets.clear();
+
+    m_viewportRT.Reset();
+    m_viewportDS.Reset();
+    m_depthStencil.Reset();
+
+    m_vertexBufferUpload.Reset();
+    m_indexBufferUpload.Reset();
+    m_vertexBuffer.Reset();
+    m_indexBuffer.Reset();
+    m_rootSignature.Reset();
+    m_pipelineState.Reset();
+    m_vertexShader.Reset();
+    m_pixelShader.Reset();
+
+    m_commandList.Reset();
+    for (uint32_t i = 0; i < kFrameCount; ++i) {
+        m_commandAllocators[i].Reset();
+        m_fenceValues[i] = 0;
+    }
+    m_commandQueue.Reset();
+    m_swapChain.Reset();
+
+    m_rtvHeap.Reset();
+    m_dsvHeap.Reset();
+    m_srvHeap.Reset();
+
+    m_fence.Reset();
+    m_device.Reset();
 }
 
 void DirectXRenderer::SafeReleaseResource(ComPtr<ID3D12Resource>& resource) {

@@ -26,6 +26,9 @@ public:
     // Draw HP/MP bars above units (called after world rendering, before ImGui::Render)
     void drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2& viewportSize, const ImVec2& viewportRectMin);
     
+    // Draw top bar with game time and hero portraits (Dota-style)
+    void drawTopBar(World& world, const Vec2& viewportSize, const ImVec2& viewportRectMin);
+    
     // Game state
     bool isPaused() const { return paused_; }
     f32 getTimeScale() const { return timeScale_; }
@@ -58,6 +61,8 @@ private:
     bool showStatsPanel_ = true;
     bool showCreepInfo_ = true;
     bool showTowerInfo_ = true;
+    bool showTowerRange_ = true;  // Show tower attack range circles
+    bool showAbilityIndicators_ = true;  // Show ability targeting indicators
     bool followCreep_ = false;
     Entity followedCreep_ = INVALID_ENTITY;
     

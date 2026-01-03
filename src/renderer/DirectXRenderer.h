@@ -139,6 +139,10 @@ private:
     uint64_t m_fenceValue;
     uint64_t m_fenceValues[kFrameCount];
 
+    // Guard to make Shutdown() idempotent (GameMain used to call Shutdown() + delete,
+    // while ~DirectXRenderer() also calls Shutdown()).
+    bool m_isShutdown = false;
+
     // Triangle rendering resources
     ComPtr<ID3D12Resource> m_vertexBuffer;
     ComPtr<ID3D12Resource> m_indexBuffer;

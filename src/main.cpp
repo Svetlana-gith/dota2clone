@@ -8,13 +8,14 @@
 #include <tchar.h>
 #include <dxgiformat.h>
 #include <algorithm>
+#include <set>
 #include "renderer/DirectXRenderer.h"
 #include "renderer/LightingSystem.h"
 #include "renderer/SkyRenderer.h"
 #include "renderer/WireframeGrid.h"
 #include "world/World.h"
+#include "world/WorldLegacy.h"
 #include "world/Components.h"
-#include "world/World.h"
 #include "ui/EditorUI.h"
 #include "ui/EditorCamera.h"
 #include "ui/Picking.h"
@@ -24,6 +25,7 @@
 #include "world/TerrainTools.h"
 #include "world/TerrainChunks.h"
 #include "world/MeshGenerators.h"
+#include "world/HeroSystem.h"
 #include "core/Timer.h"
 #include "properties/Properties.h"
 
@@ -704,6 +706,402 @@ int main(int argc, char* argv[]) {
             }
             lastGameModeActive = gameModeActive;
 
+            // ========== Hero Movement Input (Game Mode) ==========
+            // Right-click to move/attack, 4+click to attack-move
+            // Click indicator state
+            static Vec3 clickIndicatorPos(0.0f);
+            static float clickIndicatorTimer = 0.0f;
+            static bool clickIndicatorIsAttack = false;
+            const float clickIndicatorDuration = 0.5f;
+            
+            // Ability targeting state
+            static i32 pendingAbilityIndex = -1;  // -1 = no ability pending
+            static bool showAbilityRangeIndicator = false;
+            static float abilityRange = 0.0f;
+            static Vec4 abilityIndicatorColor(0.4f, 0.6f, 1.0f, 0.5f);
+            
+            // Update click indicator timer
+            if (clickIndicatorTimer > 0.0f) {
+                clickIndicatorTimer -= dt;
+            }
+            
+            if (gameModeActive && (gameViewHovered || gameViewFocused) && !io.WantTextInput) {
+                const bool rmbClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+                const bool lmbClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                const bool key4Down = (GetAsyncKeyState('4') & 0x8000) != 0;
+                
+                // Cancel ability targeting with right-click or Escape
+                if (pendingAbilityIndex >= 0 && (rmbClicked || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+                    pendingAbilityIndex = -1;
+                    showAbilityRangeIndicator = false;
+                }
+                
+                // Process clicks for movement, attack, or ability targeting
+                bool shouldProcessClick = false;
+                if (pendingAbilityIndex >= 0 && lmbClicked) {
+                    shouldProcessClick = true;  // Ability targeting
+                } else if (pendingAbilityIndex < 0 && (rmbClicked || (key4Down && lmbClicked))) {
+                    shouldProcessClick = true;  // Normal movement/attack
+                }
+                
+                if (shouldProcessClick) {
+                    // Get mouse position in game view
+                    const ImVec2 gvMin = editorUI.getGameViewRectMin();
+                    const ImVec2 gvMax = editorUI.getGameViewRectMax();
+                    const float mx = io.MousePos.x;
+                    const float my = io.MousePos.y;
+                    
+                    if (mx >= gvMin.x && my >= gvMin.y && mx < gvMax.x && my < gvMax.y) {
+                        const Vec2 localPos(mx - gvMin.x, my - gvMin.y);
+                        const Vec2 localSize(gvMax.x - gvMin.x, gvMax.y - gvMin.y);
+                        
+                        if (localSize.x > 4.0f && localSize.y > 4.0f) {
+                            const float aspectPick = localSize.x / localSize.y;
+                            const Mat4 viewProjForPick = camera.getViewProjLH_ZO(aspectPick);
+                            const Mat4 invViewProj = glm::inverse(viewProjForPick);
+                            const WorldEditor::Math::Ray ray = WorldEditor::Math::screenToWorldRay(localPos, invViewProj, localSize);
+                            
+                            // First, try to find a clickable unit (creep/hero) under cursor
+                            Entity clickedUnit = INVALID_ENTITY;
+                            float closestDist = 1000000.0f;
+                            {
+                                auto& reg = world.getEntityManager().getRegistry();
+                                
+                                // Check creeps
+                                auto creepView = reg.view<WorldEditor::CreepComponent, WorldEditor::TransformComponent>();
+                                for (auto entity : creepView) {
+                                    const auto& creep = creepView.get<WorldEditor::CreepComponent>(entity);
+                                    const auto& transform = creepView.get<WorldEditor::TransformComponent>(entity);
+                                    
+                                    if (creep.state == WorldEditor::CreepState::Dead) continue;
+                                    
+                                    // Simple sphere intersection test
+                                    const float radius = 3.0f; // Click radius
+                                    const Vec3 toUnit = transform.position - ray.origin;
+                                    const float t = glm::dot(toUnit, ray.direction);
+                                    if (t < 0) continue;
+                                    
+                                    const Vec3 closest = ray.origin + ray.direction * t;
+                                    const float dist = glm::length(closest - transform.position);
+                                    
+                                    if (dist < radius && t < closestDist) {
+                                        clickedUnit = entity;
+                                        closestDist = t;
+                                    }
+                                }
+                                
+                                // Check enemy heroes
+                                auto heroView = reg.view<WorldEditor::HeroComponent, WorldEditor::TransformComponent>();
+                                for (auto entity : heroView) {
+                                    const auto& hero = heroView.get<WorldEditor::HeroComponent>(entity);
+                                    const auto& transform = heroView.get<WorldEditor::TransformComponent>(entity);
+                                    
+                                    if (hero.state == WorldEditor::HeroState::Dead) continue;
+                                    
+                                    // Simple sphere intersection test
+                                    const float radius = 5.0f; // Larger click radius for heroes
+                                    const Vec3 toUnit = transform.position - ray.origin;
+                                    const float t = glm::dot(toUnit, ray.direction);
+                                    if (t < 0) continue;
+                                    
+                                    const Vec3 closest = ray.origin + ray.direction * t;
+                                    const float dist = glm::length(closest - transform.position);
+                                    
+                                    if (dist < radius && t < closestDist) {
+                                        clickedUnit = entity;
+                                        closestDist = t;
+                                    }
+                                }
+                            }
+                            
+                            // Raycast against terrain to find click position
+                            Entity terrainE = INVALID_ENTITY;
+                            {
+                                auto& reg = world.getEntityManager().getRegistry();
+                                auto viewT = reg.view<WorldEditor::TerrainComponent, WorldEditor::MeshComponent>();
+                                auto it = viewT.begin();
+                                if (it != viewT.end()) terrainE = *it;
+                            }
+                            
+                            if (terrainE != INVALID_ENTITY) {
+                                auto& terrain = world.getComponent<WorldEditor::TerrainComponent>(terrainE);
+                                WorldEditor::TerrainMesh::ensureHeightmap(terrain);
+                                
+                                const WorldEditor::TransformComponent tr =
+                                    world.hasComponent<WorldEditor::TransformComponent>(terrainE)
+                                        ? world.getComponent<WorldEditor::TransformComponent>(terrainE)
+                                        : WorldEditor::TransformComponent{};
+                                
+                                Vec3 hit{};
+                                if (WorldEditor::TerrainRaycast::raycastHeightfield(terrain, tr, ray, hit, nullptr, nullptr)) {
+                                    // Get HeroSystem and issue command
+                                    if (auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(world.getSystem("HeroSystem"))) {
+                                        Entity playerHero = heroSystem->getPlayerHero();
+                                        if (playerHero != INVALID_ENTITY) {
+                                            WorldEditor::HeroCommand cmd;
+                                            
+                                            // Handle ability targeting (LMB while ability is pending)
+                                            if (pendingAbilityIndex >= 0 && lmbClicked) {
+                                                cmd.type = WorldEditor::HeroCommand::Type::CastAbility;
+                                                cmd.abilityIndex = pendingAbilityIndex;
+                                                cmd.targetEntity = clickedUnit;
+                                                cmd.targetPosition = hit;
+                                                
+                                                heroSystem->issueCommand(playerHero, cmd);
+                                                
+                                                // Show cast indicator
+                                                if (clickedUnit != INVALID_ENTITY && world.hasComponent<WorldEditor::TransformComponent>(clickedUnit)) {
+                                                    clickIndicatorPos = world.getComponent<WorldEditor::TransformComponent>(clickedUnit).position;
+                                                } else {
+                                                    clickIndicatorPos = hit;
+                                                }
+                                                clickIndicatorIsAttack = true;
+                                                clickIndicatorTimer = clickIndicatorDuration;
+                                                
+                                                // Clear pending ability
+                                                pendingAbilityIndex = -1;
+                                                showAbilityRangeIndicator = false;
+                                            }
+                                            // Normal movement/attack (no ability pending)
+                                            else if (key4Down && lmbClicked) {
+                                                // 4+click = attack move
+                                                cmd.type = WorldEditor::HeroCommand::Type::AttackMove;
+                                                cmd.targetPosition = hit;
+                                                clickIndicatorIsAttack = true;
+                                                clickIndicatorPos = hit;
+                                                clickIndicatorTimer = clickIndicatorDuration;
+                                                heroSystem->issueCommand(playerHero, cmd);
+                                            } else if (rmbClicked && clickedUnit != INVALID_ENTITY && clickedUnit != playerHero) {
+                                                // Right-click on unit = attack target
+                                                cmd.type = WorldEditor::HeroCommand::Type::AttackTarget;
+                                                cmd.targetEntity = clickedUnit;
+                                                clickIndicatorIsAttack = true;
+                                                
+                                                // Get target position for indicator
+                                                if (world.hasComponent<WorldEditor::TransformComponent>(clickedUnit)) {
+                                                    clickIndicatorPos = world.getComponent<WorldEditor::TransformComponent>(clickedUnit).position;
+                                                }
+                                                clickIndicatorTimer = clickIndicatorDuration;
+                                                heroSystem->issueCommand(playerHero, cmd);
+                                            } else if (rmbClicked) {
+                                                // Right-click on ground = move
+                                                cmd.type = WorldEditor::HeroCommand::Type::MoveTo;
+                                                cmd.targetPosition = hit;
+                                                clickIndicatorIsAttack = false;
+                                                clickIndicatorPos = hit;
+                                                clickIndicatorTimer = clickIndicatorDuration;
+                                                heroSystem->issueCommand(playerHero, cmd);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Stop command (Space key)
+                if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+                    if (auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(world.getSystem("HeroSystem"))) {
+                        Entity playerHero = heroSystem->getPlayerHero();
+                        if (playerHero != INVALID_ENTITY) {
+                            heroSystem->stopHero(playerHero);
+                            clickIndicatorTimer = 0.0f; // Hide indicator on stop
+                        }
+                    }
+                }
+                
+                // Hold position (H key)
+                if (ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+                    if (auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(world.getSystem("HeroSystem"))) {
+                        Entity playerHero = heroSystem->getPlayerHero();
+                        if (playerHero != INVALID_ENTITY) {
+                            WorldEditor::HeroCommand cmd;
+                            cmd.type = WorldEditor::HeroCommand::Type::Hold;
+                            heroSystem->issueCommand(playerHero, cmd);
+                            clickIndicatorTimer = 0.0f; // Hide indicator on hold
+                        }
+                    }
+                }
+                
+                // ========== Ability Hotkeys (1, 2, 3, F) ==========
+                // Ctrl+key = level up ability, key alone = use ability
+                const bool ctrlDown = io.KeyCtrl;
+                
+                auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(world.getSystem("HeroSystem"));
+                if (heroSystem) {
+                    Entity playerHero = heroSystem->getPlayerHero();
+                    if (playerHero != INVALID_ENTITY && world.hasComponent<WorldEditor::HeroComponent>(playerHero)) {
+                        const auto& heroComp = world.getComponent<WorldEditor::HeroComponent>(playerHero);
+                        
+                        // Helper lambda to handle ability key press
+                        auto handleAbilityKey = [&](ImGuiKey key, i32 abilityIdx) {
+                            if (ImGui::IsKeyPressed(key, false)) {
+                                if (ctrlDown) {
+                                    heroSystem->learnAbility(playerHero, abilityIdx);
+                                } else if (heroSystem->canCastAbility(playerHero, abilityIdx)) {
+                                    const auto& ability = heroComp.abilities[abilityIdx];
+                                    
+                                    // Check if ability needs targeting
+                                    if (ability.data.targetType == WorldEditor::AbilityTargetType::UnitTarget ||
+                                        ability.data.targetType == WorldEditor::AbilityTargetType::PointTarget ||
+                                        ability.data.targetType == WorldEditor::AbilityTargetType::VectorTarget) {
+                                        // Enter targeting mode
+                                        pendingAbilityIndex = abilityIdx;
+                                        showAbilityRangeIndicator = true;
+                                        abilityRange = ability.data.castRange;
+                                        
+                                        // Set indicator color based on ability
+                                        if (ability.data.name.find("Fire") != String::npos) {
+                                            abilityIndicatorColor = Vec4(1.0f, 0.5f, 0.1f, 0.5f);
+                                        } else if (ability.data.name.find("Ice") != String::npos) {
+                                            abilityIndicatorColor = Vec4(0.6f, 0.9f, 1.0f, 0.5f);
+                                        } else {
+                                            abilityIndicatorColor = Vec4(0.4f, 0.6f, 1.0f, 0.5f);
+                                        }
+                                    } else {
+                                        // NoTarget or Passive - cast immediately
+                                        heroSystem->castAbility(playerHero, abilityIdx, Vec3(0), INVALID_ENTITY);
+                                    }
+                                }
+                            }
+                        };
+                        
+                        // Ability 1 (key 1)
+                        handleAbilityKey(ImGuiKey_1, 0);
+                        // Ability 2 (key 2)
+                        handleAbilityKey(ImGuiKey_2, 1);
+                        // Ability 3 (key 3)
+                        handleAbilityKey(ImGuiKey_3, 2);
+                        // Ultimate (key F)
+                        handleAbilityKey(ImGuiKey_F, 3);
+                    }
+                }
+            }
+            
+            // ========== Draw Ability Range Indicator ==========
+            if (gameModeActive && showAbilityRangeIndicator && pendingAbilityIndex >= 0) {
+                auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(world.getSystem("HeroSystem"));
+                Entity playerHero = heroSystem ? heroSystem->getPlayerHero() : INVALID_ENTITY;
+                
+                if (playerHero != INVALID_ENTITY && world.hasComponent<WorldEditor::TransformComponent>(playerHero)) {
+                    const auto& heroTransform = world.getComponent<WorldEditor::TransformComponent>(playerHero);
+                    
+                    const ImVec2 gvMin = editorUI.getGameViewRectMin();
+                    const ImVec2 gvMax = editorUI.getGameViewRectMax();
+                    const Vec2 localSize(gvMax.x - gvMin.x, gvMax.y - gvMin.y);
+                    
+                    if (localSize.x > 4.0f && localSize.y > 4.0f) {
+                        const float aspectPick = localSize.x / localSize.y;
+                        const Mat4 viewProjForPick = camera.getViewProjLH_ZO(aspectPick);
+                        
+                        ImDrawList* dl = ImGui::GetForegroundDrawList();
+                        dl->PushClipRect(gvMin, gvMax, true);
+                        
+                        // Draw range circle around hero
+                        const i32 segments = 32;
+                        ImU32 rangeColor = IM_COL32(
+                            static_cast<int>(abilityIndicatorColor.r * 255),
+                            static_cast<int>(abilityIndicatorColor.g * 255),
+                            static_cast<int>(abilityIndicatorColor.b * 255),
+                            static_cast<int>(abilityIndicatorColor.a * 255)
+                        );
+                        
+                        // Project circle points
+                        for (i32 i = 0; i < segments; i++) {
+                            float angle1 = (2.0f * 3.14159f * i) / segments;
+                            float angle2 = (2.0f * 3.14159f * (i + 1)) / segments;
+                            
+                            Vec3 p1 = heroTransform.position + Vec3(std::cos(angle1) * abilityRange, 0.1f, std::sin(angle1) * abilityRange);
+                            Vec3 p2 = heroTransform.position + Vec3(std::cos(angle2) * abilityRange, 0.1f, std::sin(angle2) * abilityRange);
+                            
+                            Vec2 sp1 = WorldEditor::Math::worldToScreen(p1, viewProjForPick, localSize);
+                            Vec2 sp2 = WorldEditor::Math::worldToScreen(p2, viewProjForPick, localSize);
+                            
+                            dl->AddLine(
+                                ImVec2(gvMin.x + sp1.x, gvMin.y + sp1.y),
+                                ImVec2(gvMin.x + sp2.x, gvMin.y + sp2.y),
+                                rangeColor, 2.0f
+                            );
+                        }
+                        
+                        // Draw targeting cursor at mouse position
+                        Vec2 screenCenter = WorldEditor::Math::worldToScreen(heroTransform.position, viewProjForPick, localSize);
+                        ImVec2 heroScreenPos(gvMin.x + screenCenter.x, gvMin.y + screenCenter.y);
+                        
+                        // Draw line from hero to mouse
+                        if (io.MousePos.x >= gvMin.x && io.MousePos.x <= gvMax.x &&
+                            io.MousePos.y >= gvMin.y && io.MousePos.y <= gvMax.y) {
+                            dl->AddLine(heroScreenPos, io.MousePos, rangeColor, 1.5f);
+                            dl->AddCircle(io.MousePos, 8.0f, rangeColor, 16, 2.0f);
+                        }
+                        
+                        dl->PopClipRect();
+                    }
+                }
+            }
+            
+            // ========== Draw Click Indicator (Dota-like) ==========
+            if (gameModeActive && clickIndicatorTimer > 0.0f) {
+                const ImVec2 gvMin = editorUI.getGameViewRectMin();
+                const ImVec2 gvMax = editorUI.getGameViewRectMax();
+                const Vec2 localSize(gvMax.x - gvMin.x, gvMax.y - gvMin.y);
+                
+                if (localSize.x > 4.0f && localSize.y > 4.0f) {
+                    const float aspectPick = localSize.x / localSize.y;
+                    const Mat4 viewProjForPick = camera.getViewProjLH_ZO(aspectPick);
+                    
+                    // Project click position to screen
+                    const Vec2 screenPos = WorldEditor::Math::worldToScreen(clickIndicatorPos, viewProjForPick, localSize);
+                    const ImVec2 center(gvMin.x + screenPos.x, gvMin.y + screenPos.y);
+                    
+                    // Check if on screen
+                    if (center.x >= gvMin.x && center.x <= gvMax.x && center.y >= gvMin.y && center.y <= gvMax.y) {
+                        ImDrawList* dl = ImGui::GetForegroundDrawList();
+                        dl->PushClipRect(gvMin, gvMax, true);
+                        
+                        // Fade out effect
+                        const float alpha = clickIndicatorTimer / clickIndicatorDuration;
+                        const float expandScale = 1.0f + (1.0f - alpha) * 0.5f; // Expand as it fades
+                        
+                        // Color: green for move, red for attack
+                        ImU32 colorOuter, colorInner;
+                        if (clickIndicatorIsAttack) {
+                            colorOuter = IM_COL32(255, 80, 80, static_cast<int>(200 * alpha));
+                            colorInner = IM_COL32(255, 120, 120, static_cast<int>(100 * alpha));
+                        } else {
+                            colorOuter = IM_COL32(80, 255, 80, static_cast<int>(200 * alpha));
+                            colorInner = IM_COL32(120, 255, 120, static_cast<int>(100 * alpha));
+                        }
+                        
+                        // Draw expanding ring
+                        const float baseRadius = 12.0f;
+                        const float outerRadius = baseRadius * expandScale;
+                        const float innerRadius = baseRadius * 0.5f * expandScale;
+                        
+                        dl->AddCircle(center, outerRadius, colorOuter, 24, 2.5f);
+                        dl->AddCircleFilled(center, innerRadius, colorInner, 16);
+                        
+                        // Draw cross/X for attack move
+                        if (clickIndicatorIsAttack) {
+                            const float crossSize = 6.0f * expandScale;
+                            dl->AddLine(
+                                ImVec2(center.x - crossSize, center.y - crossSize),
+                                ImVec2(center.x + crossSize, center.y + crossSize),
+                                colorOuter, 2.0f
+                            );
+                            dl->AddLine(
+                                ImVec2(center.x + crossSize, center.y - crossSize),
+                                ImVec2(center.x - crossSize, center.y + crossSize),
+                                colorOuter, 2.0f
+                            );
+                        }
+                        
+                        dl->PopClipRect();
+                    }
+                }
+            }
+
             // Update lighting system
             static float totalTime = 0.0f;
             totalTime += dt;
@@ -727,7 +1125,8 @@ int main(int argc, char* argv[]) {
             // - Allow when the viewport is hovered or focused (common editor UX).
             // - Do NOT require !WantCaptureKeyboard because ImGui may mark the viewport Image as "active".
             // - But avoid stealing keys while typing in text inputs.
-            const bool toolHotkeysAllowed = (viewportHovered || viewportFocused) && !io.WantTextInput;
+            // - DISABLE during game mode to avoid conflicts with hero controls
+            const bool toolHotkeysAllowed = (viewportHovered || viewportFocused) && !io.WantTextInput && !gameModeActive;
             if (toolHotkeysAllowed) {
                 if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
                     // Select mode
@@ -760,15 +1159,17 @@ int main(int argc, char* argv[]) {
             const double sculptApplyInterval = 1.0 / 60.0;     // 60 Hz brush application (feels continuous while holding LMB)
             const double terrainUpdateInterval = 1.0 / 20.0;   // 20 Hz mesh/chunk updates (keeps GPU stable)
             
-            // Terrain height sculpting
+            // Terrain height sculpting - disabled during game mode
             const bool requireCtrlToSculpt = editorUI.isTerrainSculptRequireCtrl();
-            const bool sculptChordHeld = lmbDown && !rmbDown && !uiActiveNonViewport && viewportHovered;
+            const bool sculptChordHeld = lmbDown && !rmbDown && !uiActiveNonViewport && viewportHovered && !gameModeActive;
             const bool sculptAllowed = !requireCtrlToSculpt || ctrl;
 
             // Brush cursor overlay (UE-like): show brush ring on the terrain under the mouse.
-            const bool toolSculptMode = editorUI.isTerrainEditEnabled();
-            const bool toolPaintMode = editorUI.isTexturePaintEnabled();
-            if ((toolSculptMode || toolPaintMode) && viewportHovered && !uiActiveNonViewport) {
+            // Disabled during game mode
+            const bool toolSculptMode = editorUI.isTerrainEditEnabled() && !gameModeActive;
+            const bool toolPaintMode = editorUI.isTexturePaintEnabled() && !gameModeActive;
+            const bool toolTileEditor = editorUI.isTileEditorEnabled() && !gameModeActive;
+            if ((toolSculptMode || toolPaintMode || toolTileEditor) && viewportHovered && !uiActiveNonViewport) {
                 const ImVec2 vMin = editorUI.getViewportRectMin();
                 const ImVec2 vMax = editorUI.getViewportRectMax();
                 const float mx = io.MousePos.x;
@@ -806,9 +1207,20 @@ int main(int argc, char* argv[]) {
                             Vec3 hit{};
                             if (WorldEditor::TerrainRaycast::raycastHeightfield(terrain, tr, ray, hit, nullptr, nullptr)) {
                                 // Cursor radius matches the active tool.
-                                const float radiusWU = toolSculptMode
-                                    ? std::clamp(editorUI.getTerrainBrushRadius(), 1.0f, 8.0f)
-                                    : std::clamp(editorUI.getTextureBrushRadius(), 0.5f, 20.0f);
+                                float radiusWU = 0.0f;
+                                if (toolTileEditor) {
+                                    // Height Brush always uses 1x1 tile (Hammer Editor style)
+                                    if (editorUI.getTileTool() == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                        radiusWU = terrain.tileSize; // Single tile size
+                                    } else {
+                                        const int radiusTiles = editorUI.getTileBrushRadiusTiles();
+                                        radiusWU = static_cast<float>(radiusTiles) * terrain.tileSize;
+                                    }
+                                } else if (toolSculptMode) {
+                                    radiusWU = std::clamp(editorUI.getTerrainBrushRadius(), 1.0f, 8.0f);
+                                } else {
+                                    radiusWU = std::clamp(editorUI.getTextureBrushRadius(), 0.5f, 20.0f);
+                                }
                                 // Projected-on-terrain brush outline (UE-like): sample points on the heightfield circle,
                                 // then project each to screen and draw a polyline (perspective-correct).
                                 const Vec3 hitLocal = hit - tr.position;
@@ -858,18 +1270,16 @@ int main(int argc, char* argv[]) {
                                     colOuter = IM_COL32(70, 150, 255, 200);
                                     colInner = IM_COL32(70, 150, 255, 110);
                                 } else {
-                                    using BT = WorldEditor::TerrainTools::BrushType;
-                                    BT bt = editorUI.getCurrentBrushType();
-                                    // Shift acts as invert (force Lower).
-                                    if (shift) bt = BT::Lower;
-                                    switch (bt) {
-                                        case BT::Raise:   colOuter = IM_COL32(80, 220, 120, 200); colInner = IM_COL32(80, 220, 120, 110); break;
-                                        case BT::Lower:   colOuter = IM_COL32(240, 80, 80, 200);  colInner = IM_COL32(240, 80, 80, 110);  break;
-                                        case BT::Smooth:  colOuter = IM_COL32(120, 180, 255, 200); colInner = IM_COL32(120, 180, 255, 110); break;
-                                        case BT::Flatten: colOuter = IM_COL32(255, 220, 90, 200);  colInner = IM_COL32(255, 220, 90, 110);  break;
-                                        case BT::Noise:   colOuter = IM_COL32(190, 120, 255, 200); colInner = IM_COL32(190, 120, 255, 110); break;
-                                        case BT::Erode:   colOuter = IM_COL32(255, 160, 80, 200);  colInner = IM_COL32(255, 160, 80, 110);  break;
-                                        default: break;
+                                    // Tile editor brush visualization
+                                    if (editorUI.isTileEditorEnabled()) {
+                                        const auto tool = editorUI.getTileTool();
+                                        if (tool == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                            colOuter = shift ? IM_COL32(240, 80, 80, 200) : IM_COL32(80, 220, 120, 200);
+                                            colInner = shift ? IM_COL32(240, 80, 80, 110) : IM_COL32(80, 220, 120, 110);
+                                        } else {
+                                            colOuter = IM_COL32(120, 180, 255, 200);
+                                            colInner = IM_COL32(120, 180, 255, 110);
+                                        }
                                     }
                                 }
 
@@ -899,13 +1309,115 @@ int main(int argc, char* argv[]) {
                                     }
                                 };
 
-                                drawProjectedRing(radiusWU, colOuter, 2.0f);
-                                drawProjectedRing(radiusWU * 0.5f, colInner, 1.0f);
-
-                                // Center marker (projected).
+                                // Hammer Editor style: highlight tiles that will be affected
+                                if (toolTileEditor && editorUI.getTileTool() == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                    // Height Brush always affects only 1x1 tile (Hammer Editor style)
+                                    const int radiusTiles = 1; // Always single tile for Height Brush
+                                    const float tileSize = terrain.tileSize;
+                                    
+                                    // Convert world position to tile coordinates
+                                    const int centerTileX = static_cast<int>(std::floor(hitLocal.x / tileSize));
+                                    const int centerTileZ = static_cast<int>(std::floor(hitLocal.z / tileSize));
+                                    
+                                    // Draw tile grid lines around cursor (Hammer Editor style)
+                                    const int gridRadius = 3; // Show grid for context
+                                    for (int tz = centerTileZ - gridRadius; tz <= centerTileZ + gridRadius; ++tz) {
+                                        for (int tx = centerTileX - gridRadius; tx <= centerTileX + gridRadius; ++tx) {
+                                            if (tx < 0 || tx >= terrain.tilesX || tz < 0 || tz >= terrain.tilesZ) continue;
+                                            
+                                            // Draw tile grid lines (subtle gray)
+                                            const float tileX = float(tx) * tileSize;
+                                            const float tileZ = float(tz) * tileSize;
+                                            
+                                            // Draw vertical line (right edge of tile)
+                                            if (tx < terrain.tilesX - 1) {
+                                                const float y0 = sampleHeightBilinear(tileX, tileZ);
+                                                const float y1 = sampleHeightBilinear(tileX, tileZ + tileSize);
+                                                const Vec3 p0 = Vec3(tileX + tileSize, y0, tileZ) + tr.position;
+                                                const Vec3 p1 = Vec3(tileX + tileSize, y1, tileZ + tileSize) + tr.position;
+                                                const Vec2 s0 = WorldEditor::Math::worldToScreen(p0, viewProjForPick, localSize);
+                                                const Vec2 s1 = WorldEditor::Math::worldToScreen(p1, viewProjForPick, localSize);
+                                                dl->AddLine(ImVec2(vMin.x + s0.x, vMin.y + s0.y), 
+                                                           ImVec2(vMin.x + s1.x, vMin.y + s1.y), 
+                                                           IM_COL32(100, 100, 100, 100), 1.0f);
+                                            }
+                                            
+                                            // Draw horizontal line (top edge of tile)
+                                            if (tz < terrain.tilesZ - 1) {
+                                                const float y0 = sampleHeightBilinear(tileX, tileZ);
+                                                const float y1 = sampleHeightBilinear(tileX + tileSize, tileZ);
+                                                const Vec3 p0 = Vec3(tileX, y0, tileZ) + tr.position;
+                                                const Vec3 p1 = Vec3(tileX + tileSize, y1, tileZ) + tr.position;
+                                                const Vec2 s0 = WorldEditor::Math::worldToScreen(p0, viewProjForPick, localSize);
+                                                const Vec2 s1 = WorldEditor::Math::worldToScreen(p1, viewProjForPick, localSize);
+                                                dl->AddLine(ImVec2(vMin.x + s0.x, vMin.y + s0.y), 
+                                                           ImVec2(vMin.x + s1.x, vMin.y + s1.y), 
+                                                           IM_COL32(100, 100, 100, 100), 1.0f);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Draw only the single tile under cursor (Hammer Editor style - 1x1 tile)
+                                    // Clamp tile coordinates to valid range
+                                    if (centerTileX >= 0 && centerTileX < terrain.tilesX && 
+                                        centerTileZ >= 0 && centerTileZ < terrain.tilesZ) {
+                                        
+                                        // Calculate tile corners in world space (single tile only)
+                                        const float tileX0 = float(centerTileX) * tileSize;
+                                        const float tileX1 = float(centerTileX + 1) * tileSize;
+                                        const float tileZ0 = float(centerTileZ) * tileSize;
+                                        const float tileZ1 = float(centerTileZ + 1) * tileSize;
+                                        
+                                        // Sample height at tile corners
+                                        const float y00 = sampleHeightBilinear(tileX0, tileZ0);
+                                        const float y01 = sampleHeightBilinear(tileX0, tileZ1);
+                                        const float y10 = sampleHeightBilinear(tileX1, tileZ0);
+                                        const float y11 = sampleHeightBilinear(tileX1, tileZ1);
+                                        
+                                        // Project tile corners to screen
+                                        const Vec3 p00 = Vec3(tileX0, y00, tileZ0) + tr.position;
+                                        const Vec3 p01 = Vec3(tileX0, y01, tileZ1) + tr.position;
+                                        const Vec3 p10 = Vec3(tileX1, y10, tileZ0) + tr.position;
+                                        const Vec3 p11 = Vec3(tileX1, y11, tileZ1) + tr.position;
+                                        
+                                        const Vec2 s00 = WorldEditor::Math::worldToScreen(p00, viewProjForPick, localSize);
+                                        const Vec2 s01 = WorldEditor::Math::worldToScreen(p01, viewProjForPick, localSize);
+                                        const Vec2 s10 = WorldEditor::Math::worldToScreen(p10, viewProjForPick, localSize);
+                                        const Vec2 s11 = WorldEditor::Math::worldToScreen(p11, viewProjForPick, localSize);
+                                        
+                                        ImVec2 corners[4] = {
+                                            ImVec2(vMin.x + s00.x, vMin.y + s00.y),
+                                            ImVec2(vMin.x + s10.x, vMin.y + s10.y),
+                                            ImVec2(vMin.x + s11.x, vMin.y + s11.y),
+                                            ImVec2(vMin.x + s01.x, vMin.y + s01.y)
+                                        };
+                                        
+                                        // Draw filled tile (Hammer Editor style)
+                                        ImU32 tileFillColor = shift ? IM_COL32(240, 80, 80, 120) : IM_COL32(80, 220, 120, 120);
+                                        dl->AddConvexPolyFilled(corners, 4, tileFillColor);
+                                        
+                                        // Draw tile border (thicker for highlighted tile)
+                                        ImU32 tileBorderColor = shift ? IM_COL32(240, 80, 80, 255) : IM_COL32(80, 220, 120, 255);
+                                        dl->AddPolyline(corners, 4, tileBorderColor, ImDrawFlags_Closed, 2.5f);
+                                    }
+                                }
+                                
+                                // Center marker (projected) - always calculate
                                 const Vec2 cLocal = WorldEditor::Math::worldToScreen(hit, viewProjForPick, localSize);
                                 const ImVec2 center(vMin.x + cLocal.x, vMin.y + cLocal.y);
-                                dl->AddCircleFilled(center, 2.0f, IM_COL32(0, 0, 0, 180), 12);
+                                
+                                // Draw brush visualization (ring for paint/sculpt, tiles for tile editor)
+                                if (toolTileEditor && editorUI.getTileTool() == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                    // Tile editor: tiles are already drawn above, just draw center marker
+                                    ImU32 centerColor = shift ? IM_COL32(240, 80, 80, 255) : IM_COL32(80, 220, 120, 255);
+                                    dl->AddCircleFilled(center, 4.0f, centerColor, 12);
+                                    dl->AddCircle(center, 4.0f, IM_COL32(255, 255, 255, 255), 12, 1.0f);
+                                } else {
+                                    // Paint/sculpt mode: draw circular brush
+                                    drawProjectedRing(radiusWU, colOuter, 2.5f);
+                                    drawProjectedRing(radiusWU * 0.5f, colInner, 1.5f);
+                                    dl->AddCircleFilled(center, 3.0f, IM_COL32(0, 0, 0, 200), 12);
+                                }
 
                                 // Text label near cursor (in screen space).
                                 char label[256] = {};
@@ -914,20 +1426,20 @@ int main(int argc, char* argv[]) {
                                                   std::clamp(editorUI.getTextureBrushRadius(), 0.5f, 20.0f),
                                                   std::clamp(editorUI.getTextureBrushStrength(), 0.1f, 10.0f));
                                 } else {
-                                    const char* btName = "Brush";
-                                    switch (editorUI.getCurrentBrushType()) {
-                                        case WorldEditor::TerrainTools::BrushType::Raise: btName = "Raise"; break;
-                                        case WorldEditor::TerrainTools::BrushType::Lower: btName = "Lower"; break;
-                                        case WorldEditor::TerrainTools::BrushType::Flatten: btName = "Flatten"; break;
-                                        case WorldEditor::TerrainTools::BrushType::Smooth: btName = "Smooth"; break;
-                                        case WorldEditor::TerrainTools::BrushType::Noise: btName = "Noise"; break;
-                                        case WorldEditor::TerrainTools::BrushType::Erode: btName = "Erode"; break;
-                                        default: break;
+                                    // Tile editor label
+                                    if (editorUI.isTileEditorEnabled()) {
+                                        const auto tool = editorUI.getTileTool();
+                                        const char* toolName = (tool == WorldEditor::EditorUI::TileTool::HeightBrush) ? "Height Brush" : "Ramp/Path";
+                                        if (tool == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                            std::snprintf(label, sizeof(label), "Tile Editor (%s) | 1x1 tile",
+                                                          toolName);
+                                        } else {
+                                            std::snprintf(label, sizeof(label), "Tile Editor (%s) | R=%d tiles",
+                                                          toolName, editorUI.getTileBrushRadiusTiles());
+                                        }
+                                    } else {
+                                        std::snprintf(label, sizeof(label), "No tool active");
                                     }
-                                    std::snprintf(label, sizeof(label), "Sculpt (%s%s) | R=%.2f S=%.2f",
-                                                  btName, shift ? " inverted" : "",
-                                                  std::clamp(editorUI.getTerrainBrushRadius(), 1.0f, 8.0f),
-                                                  std::clamp(editorUI.getTerrainBrushStrength(), 0.5f, 8.0f));
                                 }
 
                                 const ImVec2 textPos(center.x + 12.0f, center.y + 12.0f);
@@ -942,7 +1454,8 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            if (editorUI.isTerrainEditEnabled() && sculptChordHeld && sculptAllowed) {
+            // Old heightmap sculpting removed - use tile editor instead
+            if (false && sculptChordHeld && sculptAllowed) {
                 const ImVec2 vMin = editorUI.getViewportRectMin();
                 const ImVec2 vMax = editorUI.getViewportRectMax();
                 const float mx = io.MousePos.x;
@@ -973,60 +1486,193 @@ int main(int argc, char* argv[]) {
                         auto& mesh = world.getComponent<WorldEditor::MeshComponent>(terrainE);
                         WorldEditor::TerrainMesh::ensureHeightmap(terrain);
 
-                        const WorldEditor::TransformComponent tr =
-                            world.hasComponent<WorldEditor::TransformComponent>(terrainE)
-                                ? world.getComponent<WorldEditor::TransformComponent>(terrainE)
-                                : WorldEditor::TransformComponent{};
+                        // Old heightmap sculpting removed - terrain is now always tile-based
+                        // Use tile editor tools instead (Q/R hotkeys)
+                    }
+                }
+            }
 
-                        Vec3 hit{};
-                        if (WorldEditor::TerrainRaycast::raycastHeightfield(terrain, tr, ray, hit, nullptr, nullptr)) {
-                            // Terrain tools currently operate in terrain-local space (origin at transform.position, translation-only MVP).
-                            const Vec3 hitLocal = hit - tr.position;
-                            // Setup brush settings with ULTRA STRICT safety limits
-                            WorldEditor::TerrainTools::BrushSettings brushSettings;
-                            brushSettings.type = shift ? WorldEditor::TerrainTools::BrushType::Lower : editorUI.getCurrentBrushType();
-                            brushSettings.falloff = editorUI.getCurrentFalloffType();
-                            brushSettings.radius = std::clamp(editorUI.getTerrainBrushRadius(), 1.0f, 8.0f); // Еще меньше max radius
-                            brushSettings.strength = std::clamp(editorUI.getTerrainBrushStrength(), 0.5f, 8.0f); // Еще меньше max strength
-                            brushSettings.targetHeight = std::clamp(editorUI.getTerrainTargetHeight(), -15.0f, 15.0f); // Меньший диапазон
-                            brushSettings.noiseScale = std::clamp(editorUI.getTerrainNoiseScale(), 0.1f, 1.0f);
-                            brushSettings.smoothFactor = std::clamp(editorUI.getTerrainSmoothFactor(), 0.1f, 1.0f);
+            // Tile terrain editing (Dota-like): discrete height levels + ramp/path tool.
+            // Runs before classic height sculpting and will block it when active on a tile-mode terrain.
+            {
+                static bool rampDragging = false;
+                static Vec3 rampStartLocal(0.0f);
+                static Vec3 rampLastLocal(0.0f);
+                static double lastTileApplyTime = 0.0;
+                constexpr double tileApplyInterval = 0.08; // seconds
+                static Vec2i lastHeightBrushTile(-1, -1); // Track last tile where height brush was applied
+                static bool heightBrushWasActive = false; // Track if height brush was active in previous frame
+                static std::set<std::pair<int, int>> editedTilesThisPress; // Track tiles edited during current mouse press
 
-                            // Apply brush continuously while holding LMB (high-frequency), rebuild mesh less often.
-                            if ((nowTime - lastSculptApplyTime) >= sculptApplyInterval) {
-                                lastSculptApplyTime = nowTime;
-                                auto result = WorldEditor::TerrainTools::TerrainBrush::applyBrush(terrain, hitLocal, brushSettings, dt);
-                                
-                                if (result.modified) {
-                                    // Mark ALL chunks overlapping the affected vertex region (plus 1-cell padding for normals).
-                                    // This prevents visible seams/cracks between chunks while sculpting.
-                                    const int w = (std::max)(2, terrain.resolution.x);
-                                    const int h = (std::max)(2, terrain.resolution.y);
-                                    Vec2i vMin = result.minAffected - Vec2i(1, 1);
-                                    Vec2i vMax = result.maxAffected + Vec2i(1, 1);
-                                    vMin.x = (std::max)(0, (std::min)(w - 1, vMin.x));
-                                    vMin.y = (std::max)(0, (std::min)(h - 1, vMin.y));
-                                    vMax.x = (std::max)(0, (std::min)(w - 1, vMax.x));
-                                    vMax.y = (std::max)(0, (std::min)(h - 1, vMax.y));
+                const bool tileToolEnabled = editorUI.isTileEditorEnabled() && !gameModeActive;
+                const bool tileChordHeld = viewportHovered && lmbDown && !rmbDown && !uiActiveNonViewport && !gameModeActive;
+                const bool tileClicked = viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !rmbDown && !uiActiveNonViewport && !gameModeActive;
 
-                                    const Vec2i chunkMin(vMin.x / WorldEditor::TerrainChunks::CHUNK_SIZE,
-                                                         vMin.y / WorldEditor::TerrainChunks::CHUNK_SIZE);
-                                    const Vec2i chunkMax(vMax.x / WorldEditor::TerrainChunks::CHUNK_SIZE,
-                                                         vMax.y / WorldEditor::TerrainChunks::CHUNK_SIZE);
-                                    
-                                    // Mark chunks dirty (will be rebuilt on next render)
-                                    auto& chunks = WorldEditor::TerrainChunks::getChunks(mesh);
-                                    for (auto& chunk : chunks) {
-                                        if (chunk.chunkCoord.x >= chunkMin.x && chunk.chunkCoord.x <= chunkMax.x &&
-                                            chunk.chunkCoord.y >= chunkMin.y && chunk.chunkCoord.y <= chunkMax.y) {
-                                            chunk.isDirty = true;
+                // Hotkeys (only when viewport is focused/hovered so we don't hijack typing)
+                // Disabled during game mode
+                if (tileToolEnabled && (viewportHovered || viewportFocused) && !io.WantTextInput && !gameModeActive) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) editorUI.setTileTool(WorldEditor::EditorUI::TileTool::HeightBrush);
+                    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) editorUI.setTileTool(WorldEditor::EditorUI::TileTool::RampPath);
+                    if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false)) editorUI.adjustTileBrushRadiusTiles(-1);
+                    if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, false)) editorUI.adjustTileBrushRadiusTiles(+1);
+                }
+
+                if (tileToolEnabled) {
+                    const ImVec2 vMin = editorUI.getViewportRectMin();
+                    const ImVec2 vMax = editorUI.getViewportRectMax();
+                    const float mx = io.MousePos.x;
+                    const float my = io.MousePos.y;
+
+                    if (mx >= vMin.x && my >= vMin.y && mx < vMax.x && my < vMax.y) {
+                        const Vec2 localPos(mx - vMin.x, my - vMin.y);
+                        const Vec2 localSize(vMax.x - vMin.x, vMax.y - vMin.y);
+                        if (localSize.x > 4.0f && localSize.y > 4.0f) {
+                            const float aspectPick = localSize.x / localSize.y;
+                            const Mat4 viewProjForPick = camera.getViewProjLH_ZO(aspectPick);
+                            const Mat4 invViewProj = glm::inverse(viewProjForPick);
+                            const WorldEditor::Math::Ray ray = WorldEditor::Math::screenToWorldRay(localPos, invViewProj, localSize);
+
+                            // Find terrain entity
+                            Entity terrainE = INVALID_ENTITY;
+                            const Entity selected = editorUI.getSelected();
+                            if (selected != INVALID_ENTITY && world.isValid(selected) && world.hasComponent<WorldEditor::TerrainComponent>(selected)) {
+                                terrainE = selected;
+                            } else {
+                                auto& reg = world.getEntityManager().getRegistry();
+                                auto viewT = reg.view<WorldEditor::TerrainComponent, WorldEditor::MeshComponent>();
+                                auto it = viewT.begin();
+                                if (it != viewT.end()) terrainE = *it;
+                            }
+
+                            if (terrainE != INVALID_ENTITY) {
+                                auto& terrain = world.getComponent<WorldEditor::TerrainComponent>(terrainE);
+                                // Terrain is always tile-based now
+                                auto& mesh = world.getComponent<WorldEditor::MeshComponent>(terrainE);
+                                    const WorldEditor::TransformComponent tr =
+                                        world.hasComponent<WorldEditor::TransformComponent>(terrainE)
+                                            ? world.getComponent<WorldEditor::TransformComponent>(terrainE)
+                                            : WorldEditor::TransformComponent{};
+
+                                    Vec3 hit{};
+                                    if (WorldEditor::TerrainRaycast::raycastHeightfield(terrain, tr, ray, hit, nullptr, nullptr)) {
+                                        const Vec3 hitLocal = hit - tr.position;
+                                        rampLastLocal = hitLocal;
+
+                                        // Tile editor tools (Height Brush and Ramp/Path)
+                                        if (tileChordHeld || rampDragging) {
+                                            // Height brush: apply only once per tile (Hammer Editor style)
+                                            if (editorUI.getTileTool() == WorldEditor::EditorUI::TileTool::HeightBrush) {
+                                                rampDragging = false;
+                                                
+                                                // Convert hit position to tile coordinates
+                                                const float tileSize = terrain.tileSize;
+                                                const int currentTileX = static_cast<int>(std::floor(hitLocal.x / tileSize));
+                                                const int currentTileZ = static_cast<int>(std::floor(hitLocal.z / tileSize));
+                                                const Vec2i currentTile(currentTileX, currentTileZ);
+                                                
+                                                // Track tiles edited during current mouse press to prevent raising same tile twice
+                                                const std::pair<int, int> tileKey(currentTileX, currentTileZ);
+                                                
+                                                // Clear edited tiles set on first click (new mouse press)
+                                                if (tileClicked) {
+                                                    editedTilesThisPress.clear();
+                                                }
+                                                
+                                                // Apply only if:
+                                                // 1. Mouse was just clicked (first press), OR
+                                                // 2. Mouse is held and we moved to a different tile that hasn't been edited yet
+                                                const bool shouldApply = tileClicked || 
+                                                    (tileChordHeld && (currentTile != lastHeightBrushTile) && 
+                                                     editedTilesThisPress.find(tileKey) == editedTilesThisPress.end());
+                                                
+                                                if (shouldApply) {
+                                                    lastHeightBrushTile = currentTile;
+                                                    heightBrushWasActive = true;
+
+                                                    WorldEditor::TerrainTools::ModificationResult r;
+                                                    // Height Brush always affects only 1x1 tile (Hammer Editor style)
+                                                    const int radiusTiles = 1;
+                                                    if (ctrl && shift) {
+                                                        // Ctrl+Shift -> still treat as lower (avoid surprising flatten).
+                                                        r = WorldEditor::TerrainTools::applyTileLevelDeltaBrush(terrain, hitLocal, -1, radiusTiles);
+                                                    } else if (shift) {
+                                                        r = WorldEditor::TerrainTools::applyTileSetLevelBrush(terrain, hitLocal, editorUI.getTileFlattenLevel(), radiusTiles);
+                                                    } else {
+                                                        const int delta = ctrl ? -1 : +1;
+                                                        r = WorldEditor::TerrainTools::applyTileLevelDeltaBrush(terrain, hitLocal, delta, radiusTiles);
+                                                    }
+
+                                                    if (r.modified) {
+                                                        // Mark this tile as edited during current mouse press
+                                                        editedTilesThisPress.insert(tileKey);
+                                                        
+                                                        // Don't enforce cliff constraints for Height Brush - keep tiles flat (Hammer Editor style)
+                                                        // Only sync heightmap for the affected area
+                                                        Vec2i vMin2 = r.minAffected;
+                                                        Vec2i vMax2 = r.maxAffected;
+                                                        WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain, vMin2, vMax2);
+
+                                                        // Mark chunks dirty (same logic as sculpt)
+                                                        const int w = (std::max)(2, terrain.resolution.x);
+                                                        const int h = (std::max)(2, terrain.resolution.y);
+                                                        vMin2.x = (std::max)(0, (std::min)(w - 1, vMin2.x));
+                                                        vMin2.y = (std::max)(0, (std::min)(h - 1, vMin2.y));
+                                                        vMax2.x = (std::max)(0, (std::min)(w - 1, vMax2.x));
+                                                        vMax2.y = (std::max)(0, (std::min)(h - 1, vMax2.y));
+
+                                                        const Vec2i chunkMin(vMin2.x / WorldEditor::TerrainChunks::CHUNK_SIZE,
+                                                                             vMin2.y / WorldEditor::TerrainChunks::CHUNK_SIZE);
+                                                        const Vec2i chunkMax(vMax2.x / WorldEditor::TerrainChunks::CHUNK_SIZE,
+                                                                             vMax2.y / WorldEditor::TerrainChunks::CHUNK_SIZE);
+
+                                                        auto& chunks = WorldEditor::TerrainChunks::getChunks(mesh);
+                                                        for (auto& chunk : chunks) {
+                                                            if (chunk.chunkCoord.x >= chunkMin.x && chunk.chunkCoord.x <= chunkMax.x &&
+                                                                chunk.chunkCoord.y >= chunkMin.y && chunk.chunkCoord.y <= chunkMax.y) {
+                                                                chunk.isDirty = true;
+                                                            }
+                                                        }
+
+                                                        terrainNeedsRebuild = true;
+                                                        lastModifiedTerrain = terrainE;
+                                                        editorUI.markDirty();
+                                                    }
+                                                }
+                                            } else {
+                                                // Ramp tool: click-drag then apply once on release.
+                                                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !uiActiveNonViewport) {
+                                                    rampDragging = true;
+                                                    rampStartLocal = hitLocal;
+                                                }
+                                                if (rampDragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                                                    rampDragging = false;
+                                                    const int widthTiles = std::max(1, editorUI.getTileRampWidthTiles());
+                                                    auto r = WorldEditor::TerrainTools::applyRampPath(terrain, rampStartLocal, rampLastLocal, widthTiles);
+                                                    if (r.modified) {
+                                                        Vec2i vMin2 = r.minAffected - Vec2i(3, 3);
+                                                        Vec2i vMax2 = r.maxAffected + Vec2i(3, 3);
+                                                        WorldEditor::TerrainTools::enforceCliffConstraints(terrain, vMin2, vMax2, 3);
+                                                        WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain, vMin2, vMax2);
+
+                                                        auto& chunks = WorldEditor::TerrainChunks::getChunks(mesh);
+                                                        for (auto& chunk : chunks) {
+                                                            chunk.isDirty = true; // MVP: ramp potentially touches many normals; keep simple.
+                                                        }
+                                                        terrainNeedsRebuild = true;
+                                                        lastModifiedTerrain = terrainE;
+                                                        editorUI.markDirty();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Reset height brush tracking when button is released
+                                        if (!tileChordHeld && heightBrushWasActive) {
+                                            heightBrushWasActive = false;
+                                            lastHeightBrushTile = Vec2i(-1, -1);
+                                            editedTilesThisPress.clear(); // Clear edited tiles set when button is released
                                         }
                                     }
-                                    
-                                    terrainNeedsRebuild = true;
-                                    lastModifiedTerrain = terrainE;
-                                    editorUI.markDirty();
-                                }
                             }
                         }
                     }
@@ -1397,9 +2043,9 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Mouse picking (LMB) only inside Viewport content rect (disabled when Ctrl is held for terrain sculpt).
-            const bool sculptMode = editorUI.isTerrainEditEnabled();
-            const bool pickingAllowed = !sculptMode && !objectPlacementMode || (requireCtrlToSculpt && !io.KeyCtrl);
+            // Mouse picking (LMB) only inside Viewport content rect (disabled when tile editor is active).
+            const bool tileMode = editorUI.isTileEditorEnabled();
+            const bool pickingAllowed = !tileMode && !objectPlacementMode;
             if (pickingAllowed && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 const ImVec2 vMin = editorUI.getViewportRectMin();
                 const ImVec2 vMax = editorUI.getViewportRectMax();
@@ -1783,6 +2429,12 @@ int main(int argc, char* argv[]) {
                 Vec2 viewportSize(static_cast<f32>(vpW), static_cast<f32>(vpH));
                 ImVec2 viewportRectMin = editorUI.getViewportRectMin();
                 gameMode->drawUnitHealthBars(world, viewProj, viewportSize, viewportRectMin);
+                
+                // Draw top bar with game time and hero portraits
+                ImVec2 gameViewMin = editorUI.getGameViewRectMin();
+                ImVec2 gameViewMax = editorUI.getGameViewRectMax();
+                Vec2 gameViewSize(gameViewMax.x - gameViewMin.x, gameViewMax.y - gameViewMin.y);
+                gameMode->drawTopBar(world, gameViewSize, gameViewMin);
             }
 
             // Render ImGui on top.

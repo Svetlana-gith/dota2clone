@@ -57,18 +57,24 @@ public:
     bool isGameViewHovered() const { return gameViewHovered_; }
     bool isGameViewFocused() const { return gameViewFocused_; }
 
-    bool isTerrainEditEnabled() const { return terrainEditEnabled_; }
+    // Legacy terrain sculpting (deprecated)
+    bool isTerrainEditEnabled() const { return false; } // Always disabled - use tile editor
     bool isTerrainSculptRequireCtrl() const { return terrainSculptRequireCtrl_; }
     float getTerrainBrushRadius() const { return terrainBrushRadius_; }
     float getTerrainBrushStrength() const { return terrainBrushStrength_; }
     
-    // Advanced terrain tools getters
-    TerrainTools::BrushType getCurrentBrushType() const { return currentBrushType_; }
-    TerrainTools::FalloffType getCurrentFalloffType() const { return currentFalloffType_; }
-    float getTerrainTargetHeight() const { return terrainTargetHeight_; }
-    float getTerrainNoiseScale() const { return terrainNoiseScale_; }
-    float getTerrainSmoothFactor() const { return terrainSmoothFactor_; }
-    
+    // Tile terrain editor (Dota-like)
+    enum class TileTool : u8 { HeightBrush = 0, RampPath = 1 };
+    bool isTileEditorEnabled() const { return tileEditorEnabled_; }
+    TileTool getTileTool() const { return tileTool_; }
+    int getTileBrushRadiusTiles() const { return tileBrushRadiusTiles_; }
+    int getTileFlattenLevel() const { return tileFlattenLevel_; }
+    int getTileRampWidthTiles() const { return tileRampWidthTiles_; }
+    int getTileInitTilesX() const { return tileInitTilesX_; }
+    int getTileInitTilesZ() const { return tileInitTilesZ_; }
+    float getTileInitTileSize() const { return tileInitTileSize_; }
+    float getTileInitHeightStep() const { return tileInitHeightStep_; }
+
     // Texture painting getters
     bool isTexturePaintEnabled() const { return texturePaintEnabled_; }
     int getActiveTextureLayer() const { return activeTextureLayer_; }
@@ -83,6 +89,7 @@ public:
     // Document state
     bool isDirty() const { return dirty_; }
     void markDirty() { dirty_ = true; }
+    void setDirty(bool dirty) { dirty_ = dirty; }
     void clearDirty() { dirty_ = false; }
     const String& getCurrentMapPath() const { return currentMapPath_; }
     bool consumeQuitRequested() {
@@ -94,6 +101,12 @@ public:
     
     // Game mode access
     class GameMode* getGameMode() { return gameMode_.get(); }
+
+    // Tile editor controls (for hotkeys)
+    void setTileTool(TileTool tool) { tileTool_ = tool; }
+    void adjustTileBrushRadiusTiles(int delta) {
+        tileBrushRadiusTiles_ = std::clamp(tileBrushRadiusTiles_ + delta, 1, 64);
+    }
 
 private:
     // Game mode for testing gameplay
@@ -130,27 +143,28 @@ private:
     Vector<PropCommand> redo_;
     Map<u64, PropValue> activeEditOld_; // key -> old value captured on activation
 
-    // Terrain tool (MVP): Ctrl+LMB sculpt in viewport, Shift lowers.
+    // Legacy terrain sculpting (deprecated - use tile editor instead)
     bool terrainEditEnabled_ = false;
-    // Safe mode: require Ctrl to apply sculpt strokes (prevents accidental edits while selecting).
     bool terrainSculptRequireCtrl_ = false;
-    float terrainBrushRadius_ = 8.0f;   // Увеличен с 4.0f до 8.0f
-    float terrainBrushStrength_ = 15.0f; // Увеличен с 6.0f до 15.0f
-    Vec2i terrainDefaultResolution_ = Vec2i(128, 128);
-    float terrainDefaultSize_ = 200.0f;
-    
-    // Advanced terrain tools
-    TerrainTools::BrushType currentBrushType_ = TerrainTools::BrushType::Raise;
-    TerrainTools::FalloffType currentFalloffType_ = TerrainTools::FalloffType::Smooth; // Изменен с Gaussian на Smooth
-    float terrainTargetHeight_ = 0.0f;
-    float terrainNoiseScale_ = 1.0f;
-    float terrainSmoothFactor_ = 0.5f;
+    float terrainBrushRadius_ = 8.0f;
+    float terrainBrushStrength_ = 15.0f;
     
     // Texture painting
     bool texturePaintEnabled_ = false;
     int activeTextureLayer_ = 0;
     float textureBrushRadius_ = 3.0f;
     float textureBrushStrength_ = 2.0f;
+
+    // Tile terrain editing (Dota 2 Workshop Tools style)
+    bool tileEditorEnabled_ = false;
+    TileTool tileTool_ = TileTool::HeightBrush;
+    int tileBrushRadiusTiles_ = 2;
+    int tileFlattenLevel_ = 0;
+    int tileRampWidthTiles_ = 2;
+    int tileInitTilesX_ = 128;
+    int tileInitTilesZ_ = 128;
+    float tileInitTileSize_ = 128.0f;
+    float tileInitHeightStep_ = 128.0f;
     
     // Visualization options
     bool showWireframe_ = false;
@@ -178,6 +192,9 @@ private:
     bool hierarchyShowMaterials_ = true;
     bool hierarchyShowMeshes_ = true;
     bool hierarchyShowOthers_ = true;
+    
+    // Force layout reset on first run with new GUI
+    bool forceLayoutReset_ = true;
     
     // Path visualization
     bool showPathVisualization_ = true;
@@ -213,6 +230,10 @@ private:
     void drawMainMenu(World& world);
     void drawDockSpace();
     void buildDefaultDockLayout(ImGuiID dockspaceId);
+    void drawToolbar(World& world);
+    void drawStatusBar(World& world);
+    void drawToolsPanel(World& world);
+    void applyModernTheme();
     void drawViewport(World& world);
     void drawGameView(World& world);
     void drawHierarchy(World& world);
@@ -222,7 +243,12 @@ private:
     void drawTexturePainting(World& world);
     void drawObjectPlacement(World& world);
     void drawStats(World& world);
+    void drawMOBAGamePanel(World& world);
     void drawPathVisualizationPanel(World& world);
+    void drawHeroHUD(World& world);
+    void drawHeroAbilityBar(const struct HeroComponent& hero, const ImVec2& screenPos);
+    void drawHeroInventory(const struct HeroComponent& hero, const ImVec2& screenPos);
+    void drawAbilityTooltip(const struct HeroAbility& ability, const struct HeroComponent& hero);
 
     void ensureSelectionValid(World& world);
 

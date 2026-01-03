@@ -8,13 +8,20 @@ set(WORLD_SOURCES
     MeshGenerators.cpp
     TerrainRaycast.cpp
     TerrainChunks.cpp
-    World.cpp
+    WorldLegacy.cpp
+    WorldAdapter.cpp
     CollisionSystem.cpp
     CreepSystem.cpp
+    ProjectileSystem.cpp
     TowerSystem.cpp
+    CreepSpawnSystem.cpp
+    HeroSystem.cpp
+    ParticleSystem.cpp
+    AnimationSystem.cpp
 )
 
 set(WORLD_HEADERS
+    WorldLegacy.h
     World.h
     System.h
     EntityManager.h
@@ -25,8 +32,13 @@ set(WORLD_HEADERS
     TerrainChunks.h
     MeshGenerators.h
     CreepSystem.h
-    CollisionSystem.h
+    ProjectileSystem.h
     TowerSystem.h
+    CreepSpawnSystem.h
+    CollisionSystem.h
+    HeroSystem.h
+    ParticleSystem.h
+    AnimationSystem.h
 )
 
 add_library(world_editor_world STATIC
@@ -40,6 +52,7 @@ target_include_directories(world_editor_world PUBLIC
 
 target_link_libraries(world_editor_world PUBLIC
     world_editor_core
+    world_editor_common
 )
 
 # Enable DirectX renderer flag

@@ -62,6 +62,16 @@ bool WireframeGrid::generateGrid(const TerrainComponent& terrain, const MeshComp
         return false;
     }
 
+    // Safety: skip wireframe for very large terrains to prevent GPU buffer overflow.
+    // For 129x129, wireframe would create ~66k vertices which can crash the driver.
+    const int maxSafeResolution = 65;
+    if (w > maxSafeResolution || h > maxSafeResolution) {
+        // Clear existing grid instead of generating new one
+        gridVertices_.clear();
+        gridIndices_.clear();
+        return false;
+    }
+
     // Очищаем предыдущие данные
     gridVertices_.clear();
     gridIndices_.clear();

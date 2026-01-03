@@ -3,11 +3,26 @@
 # Core library
 add_subdirectory(core)
 
+# Common library (shared between client/server)
+add_subdirectory(common)
+
+# Network library (UDP client/server)
+add_subdirectory(network)
+
+# Authentication library
+add_subdirectory(auth)
+
 # Renderer library
 add_subdirectory(renderer)
 
-# World library
+# World library (ECS components and systems)
 add_subdirectory(world)
+
+# Server library (authoritative simulation)
+add_subdirectory(server)
+
+# Client library (prediction + interpolation)
+add_subdirectory(client)
 
 # Serialization (maps)
 add_subdirectory(serialization)
@@ -17,3 +32,6 @@ add_subdirectory(properties)
 
 # UI library (editor-only for now)
 add_subdirectory(ui)
+
+# Game module with Panorama UI
+add_subdirectory(game)

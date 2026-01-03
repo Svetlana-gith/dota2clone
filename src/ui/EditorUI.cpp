@@ -4,7 +4,10 @@
 #include "EditorCamera.h"
 #include "world/World.h"
 #include "world/Components.h"
+#include "world/CreepSystem.h"
+#include "world/HeroSystem.h"
 #include "world/TerrainMesh.h"
+#include "world/TerrainChunks.h"
 #include "world/MeshGenerators.h"
 #include "serialization/MapIO.h"
 #include "renderer/DirectXRenderer.h"
@@ -234,6 +237,286 @@ bool EditorUI::drawComponentProperties(Entity e, ComponentSlot slot, void* compo
     return anyChanged;
 }
 
+// ============================================================================
+// Modern Theme & Styling
+// ============================================================================
+
+void EditorUI::applyModernTheme() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+    
+    // Dark theme colors (Unreal Engine inspired)
+    colors[ImGuiCol_WindowBg]             = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    colors[ImGuiCol_ChildBg]              = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    colors[ImGuiCol_PopupBg]              = ImVec4(0.12f, 0.12f, 0.12f, 0.94f);
+    colors[ImGuiCol_Border]               = ImVec4(0.20f, 0.20f, 0.20f, 0.50f);
+    colors[ImGuiCol_FrameBg]              = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]       = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]        = ImVec4(0.28f, 0.28f, 0.28f, 1.00f);
+    colors[ImGuiCol_TitleBg]              = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]        = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+    colors[ImGuiCol_MenuBarBg]            = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg]          = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrab]        = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+    colors[ImGuiCol_CheckMark]            = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    colors[ImGuiCol_SliderGrab]           = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive]     = ImVec4(0.36f, 0.69f, 1.00f, 1.00f);
+    colors[ImGuiCol_Button]               = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]        = ImVec4(0.28f, 0.28f, 0.28f, 1.00f);
+    colors[ImGuiCol_ButtonActive]         = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    colors[ImGuiCol_Header]               = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]        = ImVec4(0.26f, 0.59f, 0.98f, 0.80f);
+    colors[ImGuiCol_HeaderActive]         = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    colors[ImGuiCol_Separator]            = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+    colors[ImGuiCol_SeparatorHovered]     = ImVec4(0.26f, 0.59f, 0.98f, 0.78f);
+    colors[ImGuiCol_SeparatorActive]      = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
+    colors[ImGuiCol_Tab]                  = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
+    colors[ImGuiCol_TabHovered]           = ImVec4(0.26f, 0.59f, 0.98f, 0.80f);
+    colors[ImGuiCol_TabActive]            = ImVec4(0.20f, 0.41f, 0.68f, 1.00f);
+    colors[ImGuiCol_DockingPreview]       = ImVec4(0.26f, 0.59f, 0.98f, 0.70f);
+    colors[ImGuiCol_TextSelectedBg]       = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
+    
+    // Style adjustments
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 2.0f;
+    style.GrabRounding = 2.0f;
+    style.TabRounding = 4.0f;
+    style.ScrollbarRounding = 4.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
+    style.PopupBorderSize = 1.0f;
+    style.WindowPadding = ImVec2(8.0f, 8.0f);
+    style.FramePadding = ImVec2(6.0f, 4.0f);
+    style.ItemSpacing = ImVec2(8.0f, 4.0f);
+    style.ItemInnerSpacing = ImVec2(4.0f, 4.0f);
+    style.IndentSpacing = 20.0f;
+}
+
+// ============================================================================
+// Toolbar
+// ============================================================================
+
+void EditorUI::drawToolbar(World& world) {
+    (void)world;
+    
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float toolbarHeight = 40.0f;
+    const float menuBarHeight = ImGui::GetFrameHeight(); // Height of main menu bar
+    
+    // Position toolbar right below the menu bar
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y));
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, toolbarHeight));
+    
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+    
+    if (ImGui::Begin("##Toolbar", nullptr, flags)) {
+        // Tool selection buttons
+        const ImVec2 btnSize(28, 28);
+        
+        // Select tool
+        bool isSelectMode = !tileEditorEnabled_ && !texturePaintEnabled_ && !objectPlacementEnabled_;
+        if (isSelectMode) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        if (ImGui::Button("S##Select", btnSize)) {
+            tileEditorEnabled_ = false;
+            texturePaintEnabled_ = false;
+            objectPlacementEnabled_ = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select (1)");
+        if (isSelectMode) ImGui::PopStyleColor();
+        
+        ImGui::SameLine();
+        
+        // Terrain sculpt tool
+        if (tileEditorEnabled_) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        if (ImGui::Button("T##Terrain", btnSize)) {
+            tileEditorEnabled_ = true;
+            texturePaintEnabled_ = false;
+            objectPlacementEnabled_ = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Terrain Sculpt (2)");
+        if (tileEditorEnabled_) ImGui::PopStyleColor();
+        
+        ImGui::SameLine();
+        
+        // Paint tool
+        if (texturePaintEnabled_) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        if (ImGui::Button("P##Paint", btnSize)) {
+            tileEditorEnabled_ = false;
+            texturePaintEnabled_ = true;
+            objectPlacementEnabled_ = false;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint (3)");
+        if (texturePaintEnabled_) ImGui::PopStyleColor();
+        
+        ImGui::SameLine();
+        
+        // Object placement tool
+        if (objectPlacementEnabled_) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.59f, 0.98f, 1.0f));
+        if (ImGui::Button("O##Object", btnSize)) {
+            tileEditorEnabled_ = false;
+            texturePaintEnabled_ = false;
+            objectPlacementEnabled_ = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Place Objects (4)");
+        if (objectPlacementEnabled_) ImGui::PopStyleColor();
+        
+        ImGui::SameLine();
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        
+        // Play/Stop buttons
+        bool isPlaying = gameMode_ && gameMode_->isGameModeActive();
+        
+        if (isPlaying) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            if (ImGui::Button("Stop", ImVec2(50, 28))) {
+                if (gameMode_) {
+                    gameMode_->setGameModeActive(false);
+                    world.resetGame();
+                }
+            }
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+            if (ImGui::Button("Play", ImVec2(50, 28))) {
+                if (gameMode_) {
+                    gameMode_->setGameModeActive(true);
+                    world.startGame(); // Start creep spawning!
+                }
+            }
+            ImGui::PopStyleColor();
+        }
+        
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play/Stop Game Mode");
+        
+        ImGui::SameLine();
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+        ImGui::SameLine();
+        
+        // Visualization toggles
+        ImGui::Checkbox("Wireframe", &showWireframe_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Paths", &showPathLines_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Ranges", &showUnitAttackRanges_);
+    }
+    ImGui::End();
+    
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+// ============================================================================
+// Status Bar
+// ============================================================================
+
+void EditorUI::drawStatusBar(World& world) {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float statusBarHeight = 24.0f;
+    
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - statusBarHeight));
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, statusBarHeight));
+    
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.08f, 1.0f));
+    
+    if (ImGui::Begin("##StatusBar", nullptr, flags)) {
+        // Entity count
+        ImGui::Text("Entities: %zu", world.getEntityCount());
+        
+        ImGui::SameLine(150);
+        
+        // Selected entity
+        if (selected_ != INVALID_ENTITY && world.isValid(selected_)) {
+            if (world.hasComponent<NameComponent>(selected_)) {
+                ImGui::Text("Selected: %s", world.getComponent<NameComponent>(selected_).name.c_str());
+            } else {
+                ImGui::Text("Selected: Entity %u", static_cast<u32>(selected_));
+            }
+        } else {
+            ImGui::TextDisabled("No selection");
+        }
+        
+        ImGui::SameLine(400);
+        
+        // Current tool
+        const char* toolName = "Select";
+        if (tileEditorEnabled_) toolName = "Terrain Sculpt";
+        else if (texturePaintEnabled_) toolName = "Paint";
+        else if (objectPlacementEnabled_) toolName = "Place Objects";
+        ImGui::Text("Tool: %s", toolName);
+        
+        ImGui::SameLine(600);
+        
+        // FPS
+        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        
+        ImGui::SameLine(viewport->WorkSize.x - 150);
+        
+        // Dirty indicator
+        if (dirty_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "* Modified");
+        } else {
+            ImGui::TextDisabled("Saved");
+        }
+    }
+    ImGui::End();
+    
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+// ============================================================================
+// Tools Panel (combines Terrain, Paint, Objects)
+// ============================================================================
+
+void EditorUI::drawToolsPanel(World& world) {
+    if (!ImGui::Begin("Tools")) {
+        ImGui::End();
+        return;
+    }
+    
+    // Tab bar for different tool categories
+    if (ImGui::BeginTabBar("ToolsTabs")) {
+        if (ImGui::BeginTabItem("Terrain")) {
+            drawTerrainTools(world);
+            ImGui::EndTabItem();
+        }
+        
+        if (ImGui::BeginTabItem("Paint")) {
+            drawTexturePainting(world);
+            ImGui::EndTabItem();
+        }
+        
+        if (ImGui::BeginTabItem("Objects")) {
+            drawObjectPlacement(world);
+            ImGui::EndTabItem();
+        }
+        
+        if (ImGui::BeginTabItem("Create")) {
+            drawTerrain(world);
+            ImGui::EndTabItem();
+        }
+        
+        ImGui::EndTabBar();
+    }
+    
+    ImGui::End();
+}
+
 void EditorUI::draw(World& world) {
     ensureSelectionValid(world);
     
@@ -242,8 +525,12 @@ void EditorUI::draw(World& world) {
         gameMode_ = std::make_unique<GameMode>();
     }
 
+    // Apply modern dark theme
+    applyModernTheme();
+
     drawDockSpace();
     drawMainMenu(world);
+    drawToolbar(world);
     drawUnsavedChangesPopup(world);
     
     // Draw game mode if active
@@ -255,11 +542,11 @@ void EditorUI::draw(World& world) {
     drawGameView(world);
     drawHierarchy(world);
     drawInspector(world);
-    drawTerrain(world);
+    drawToolsPanel(world);
     drawStats(world);
-    
-    // Draw path visualization panel
+    drawMOBAGamePanel(world);
     drawPathVisualizationPanel(world);
+    drawStatusBar(world);
 }
 
 void EditorUI::performNew(World& world) {
@@ -347,8 +634,19 @@ void EditorUI::drawUnsavedChangesPopup(World& world) {
 
 void EditorUI::drawDockSpace() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    
+    // Account for toolbar height
+    const float toolbarHeight = 40.0f;
+    const float statusBarHeight = 24.0f;
+    
+    ImVec2 dockPos = viewport->WorkPos;
+    dockPos.y += toolbarHeight; // Start below toolbar
+    
+    ImVec2 dockSize = viewport->WorkSize;
+    dockSize.y -= toolbarHeight + statusBarHeight; // Subtract toolbar and status bar
+    
+    ImGui::SetNextWindowPos(dockPos);
+    ImGui::SetNextWindowSize(dockSize);
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags windowFlags = 0;
@@ -359,7 +657,6 @@ void EditorUI::drawDockSpace() {
     windowFlags |= ImGuiWindowFlags_NoMove;
     windowFlags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
     windowFlags |= ImGuiWindowFlags_NoNavFocus;
-    windowFlags |= ImGuiWindowFlags_MenuBar;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -374,10 +671,11 @@ void EditorUI::drawDockSpace() {
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
     // Build a sane default layout once (or on request).
-    if (!dockLayoutBuilt_ || requestResetLayout_) {
+    if (!dockLayoutBuilt_ || requestResetLayout_ || forceLayoutReset_) {
         buildDefaultDockLayout(dockspaceId);
         dockLayoutBuilt_ = true;
         requestResetLayout_ = false;
+        forceLayoutReset_ = false;
     }
 
     ImGui::End();
@@ -483,9 +781,8 @@ void EditorUI::drawMainMenu(World& world) {
             world.addComponent<TransformComponent>(e);
 
             auto& t = world.addComponent<TerrainComponent>(e);
-            t.resolution = terrainDefaultResolution_;
-            t.size = terrainDefaultSize_;
-            TerrainMesh::ensureHeightmap(t);
+            // TerrainComponent already has default tile-based values
+            WorldEditor::TerrainTools::syncHeightmapFromLevels(t);
 
             auto& mesh = world.addComponent<MeshComponent>(e);
             mesh.name = "Terrain";
@@ -568,22 +865,37 @@ void EditorUI::buildDefaultDockLayout(ImGuiID dockspaceId) {
     ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
 
     ImGuiID dockMain = dockspaceId;
-    ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.22f, nullptr, &dockMain);
-    ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.30f, nullptr, &dockMain);
+    
+    // Left panel (Hierarchy) - 18%
+    ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.18f, nullptr, &dockMain);
+    
+    // Right panel (Inspector + Tools) - 25%
+    ImGuiID dockRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.25f, nullptr, &dockMain);
+    
+    // Bottom panel (Stats, MOBA, Paths) - 25%
+    ImGuiID dockBottom = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.25f, nullptr, &dockMain);
+    
+    // Split right into Inspector (top) and Tools (bottom)
+    ImGuiID dockRightBottom = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.50f, nullptr, &dockRight);
 
-    // Split right into top/bottom, then bottom into two.
-    ImGuiID dockRightBottom = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.33f, nullptr, &dockRight);
-    ImGuiID dockRightBottom2 = ImGui::DockBuilderSplitNode(dockRightBottom, ImGuiDir_Down, 0.50f, nullptr, &dockRightBottom);
-    ImGuiID dockLeftBottom = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.33f, nullptr, &dockLeft);
-
-    // Central area is dockMain after splits.
+    // Central area is dockMain after splits - Viewport and Game View
     ImGui::DockBuilderDockWindow("Viewport", dockMain);
     ImGui::DockBuilderDockWindow("Game View", dockMain);
+    
+    // Left - Hierarchy
     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+    
+    // Right top - Inspector
     ImGui::DockBuilderDockWindow("Inspector", dockRight);
+    
+    // Right bottom - Tools and Camera
+    ImGui::DockBuilderDockWindow("Tools", dockRightBottom);
     ImGui::DockBuilderDockWindow("Camera", dockRightBottom);
-    ImGui::DockBuilderDockWindow("Stats", dockRightBottom2);
-    ImGui::DockBuilderDockWindow("Terrain", dockLeftBottom);
+    
+    // Bottom - Stats, MOBA, Paths (tabbed)
+    ImGui::DockBuilderDockWindow("Stats", dockBottom);
+    ImGui::DockBuilderDockWindow("MOBA Game Control", dockBottom);
+    ImGui::DockBuilderDockWindow("Path Visualization", dockBottom);
 
     ImGui::DockBuilderFinish(dockspaceId);
 }
@@ -611,22 +923,18 @@ void EditorUI::drawTerrain(World& world) {
 
     ImGui::Separator();
 
-    // Default create settings
+    // Create new terrain (always tile-based)
     ImGui::Text("Create New Terrain");
-    ImGui::InputInt2("Default Resolution", &terrainDefaultResolution_.x);
-    terrainDefaultResolution_.x = std::max(2, terrainDefaultResolution_.x);
-    terrainDefaultResolution_.y = std::max(2, terrainDefaultResolution_.y);
-    ImGui::InputFloat("Default Size", &terrainDefaultSize_);
-    if (terrainDefaultSize_ < 1.0f) terrainDefaultSize_ = 1.0f;
+    ImGui::Text("Uses default tile settings from TerrainComponent");
 
     if (ImGui::Button("Create Terrain")) {
         Entity e = world.createEntity("Terrain");
         world.addComponent<TransformComponent>(e);
 
         auto& t = world.addComponent<TerrainComponent>(e);
-        t.resolution = terrainDefaultResolution_;
-        t.size = terrainDefaultSize_;
-        TerrainMesh::ensureHeightmap(t);
+        // Initialize tile terrain with default values to ensure heightLevels is properly set up
+        WorldEditor::TerrainTools::initTileTerrain(t, t.tilesX, t.tilesZ, t.tileSize, t.heightStep);
+        WorldEditor::TerrainTools::syncHeightmapFromLevels(t);
 
         auto& mesh = world.addComponent<MeshComponent>(e);
         mesh.name = "Terrain";
@@ -670,7 +978,7 @@ void EditorUI::drawTerrain(World& world) {
         ImGui::Text("Size: %.2f", t.size);
         
         if (ImGui::Button("Rebuild Mesh")) {
-            TerrainMesh::ensureHeightmap(t);
+            WorldEditor::TerrainTools::syncHeightmapFromLevels(t);
             TerrainMesh::buildMesh(t, mesh);
             
             // Generate wireframe grid
@@ -678,111 +986,138 @@ void EditorUI::drawTerrain(World& world) {
                 renderer_->GetWireframeGrid()->generateGrid(t, mesh);
             }
         }
-        
-        ImGui::SameLine();
-        if (ImGui::Button("Generate Noise")) {
-            WorldEditor::TerrainTools::NoiseSettings noiseSettings;
-            noiseSettings.frequency = 0.05f;
-            noiseSettings.amplitude = 15.0f;
-            noiseSettings.octaves = 4;
-            
-            auto result = WorldEditor::TerrainTools::TerrainBrush::generateNoise(t, noiseSettings);
-            if (result.modified) {
-                TerrainMesh::buildMesh(t, mesh);
-                
-                // Generate wireframe grid
-                if (renderer_ && renderer_->GetWireframeGrid()) {
-                    renderer_->GetWireframeGrid()->generateGrid(t, mesh);
-                }
-                
-                markDirty();
-            }
-        }
-        
-        if (ImGui::Button("Import Heightmap")) {
-            auto result = WorldEditor::TerrainTools::TerrainBrush::importHeightmap(t, "heightmap.png");
-            if (result.modified) {
-                TerrainMesh::buildMesh(t, mesh);
-                
-                // Generate wireframe grid
-                if (renderer_ && renderer_->GetWireframeGrid()) {
-                    renderer_->GetWireframeGrid()->generateGrid(t, mesh);
-                }
-                
-                markDirty();
-            }
-        }
-        
-        ImGui::SameLine();
-        if (ImGui::Button("Export Heightmap")) {
-            WorldEditor::TerrainTools::TerrainBrush::exportHeightmap(t, "exported_heightmap.png");
-        }
     }
 
     ImGui::End();
 }
 
 void EditorUI::drawTerrainTools(World& world) {
-    (void)world;
-    
-    ImGui::Checkbox("Height Sculpting", &terrainEditEnabled_);
-    
-    if (!terrainEditEnabled_) {
+    // Tile-based terrain editor (Dota 2 Workshop Tools style)
+    ImGui::Text("Tile Editor (Dota 2 Workshop Tools style)");
+
+    // Only meaningful when a terrain is selected.
+    Entity terrainE = INVALID_ENTITY;
+    if (selected_ != INVALID_ENTITY && world.isValid(selected_) && world.hasComponent<TerrainComponent>(selected_)) {
+        terrainE = selected_;
+    }
+
+    ImGui::Checkbox("Enable Tile Editor", &tileEditorEnabled_);
+    if (terrainE == INVALID_ENTITY) {
+        ImGui::TextDisabled("Select a Terrain entity to use Tile Editor.");
         ImGui::BeginDisabled();
     }
 
-    // Interaction mode
-    ImGui::Checkbox("Safe Mode: Hold Ctrl to Sculpt", &terrainSculptRequireCtrl_);
-    ImGui::Text("Hotkeys: 1 Select, 2 Sculpt, 3 Paint");
-    
-    // Brush Type Selection
-    ImGui::Text("Brush Type:");
-    const char* brushTypes[] = { "Raise", "Lower", "Flatten", "Smooth", "Noise", "Erode" };
-    int currentBrush = static_cast<int>(currentBrushType_);
-    if (ImGui::Combo("##BrushType", &currentBrush, brushTypes, IM_ARRAYSIZE(brushTypes))) {
-        currentBrushType_ = static_cast<WorldEditor::TerrainTools::BrushType>(currentBrush);
+    if (terrainE != INVALID_ENTITY) {
+        auto& t = world.getComponent<TerrainComponent>(terrainE);
+        ImGui::Text("Selected Terrain: Tile-based");
+
+        ImGui::InputInt("Tiles X", &tileInitTilesX_);
+        ImGui::InputInt("Tiles Z", &tileInitTilesZ_);
+        tileInitTilesX_ = std::max(1, tileInitTilesX_);
+        tileInitTilesZ_ = std::max(1, tileInitTilesZ_);
+        ImGui::InputFloat("Tile Size", &tileInitTileSize_);
+        ImGui::InputFloat("Height Step", &tileInitHeightStep_);
+        tileInitTileSize_ = std::max(1.0f, tileInitTileSize_);
+        tileInitHeightStep_ = std::max(1.0f, tileInitHeightStep_);
+
+        if (ImGui::Button("Initialize Tile Terrain", ImVec2(-1, 0))) {
+            // Convert selected terrain to tile grid and rebuild mesh immediately.
+            WorldEditor::TerrainTools::initTileTerrain(t, tileInitTilesX_, tileInitTilesZ_, tileInitTileSize_, tileInitHeightStep_);
+            WorldEditor::TerrainTools::syncHeightmapFromLevels(t);
+
+            // Get or create mesh component (safe pattern)
+            MeshComponent* meshPtr = nullptr;
+            if (world.hasComponent<MeshComponent>(terrainE)) {
+                meshPtr = &world.getComponent<MeshComponent>(terrainE);
+            } else {
+                meshPtr = &world.addComponent<MeshComponent>(terrainE);
+            }
+            auto& mesh = *meshPtr;
+
+            // Wait for GPU to finish before invalidating buffers (prevents DeviceRemoved errors).
+            if (renderer_) {
+                renderer_->WaitForPreviousFrame();
+            }
+
+            // Clear old chunks before rebuilding (global chunks storage needs clearing when terrain size changes).
+            auto& chunks = WorldEditor::TerrainChunks::getChunks(mesh);
+            chunks.clear();
+
+            // Invalidate all GPU buffers first (after GPU finished)
+            TerrainMesh::invalidateGpu(mesh);
+            
+            // Clear CPU mesh data before rebuild
+            mesh.vertices.clear();
+            mesh.normals.clear();
+            mesh.texCoords.clear();
+            mesh.indices.clear();
+
+            // Rebuild mesh from new tile terrain
+            TerrainMesh::buildMesh(t, mesh);
+            
+            // For large terrains (like 128x128 tiles = 129x129 vertices), initialize chunk system immediately
+            // to avoid creating huge single GPU buffers that can cause DeviceRemoved errors.
+            if (renderer_ && renderer_->GetDevice()) {
+                const int largeTerrainThreshold = 100; // Use chunks for terrains larger than 100x100
+                if (t.resolution.x > largeTerrainThreshold || t.resolution.y > largeTerrainThreshold) {
+                    // Initialize chunk system now to split terrain into manageable pieces
+                    if (WorldEditor::TerrainChunks::initializeChunks(t, mesh)) {
+                        // Immediately update all chunks so they have GPU buffers and can be rendered
+                        WorldEditor::TerrainChunks::updateDirtyChunks(t, mesh, renderer_->GetDevice());
+                        // Clear main mesh data since we're using chunks (prevents confusion)
+                        mesh.vertices.clear();
+                        mesh.normals.clear();
+                        mesh.texCoords.clear();
+                        mesh.indices.clear();
+                    }
+                }
+                // For smaller terrains, keep main mesh data - it will be rendered normally
+                // GPU buffers will be created automatically by RenderSystem::ensureMeshBuffers on next frame
+            }
+            
+            // Skip wireframe grid for very large terrains (prevents GPU buffer overflow).
+            // For 128x128 tiles (129x129 vertices), wireframe would create ~66k vertices which can crash.
+            const int maxSafeResolution = 65; // Safe limit for wireframe grid
+            if (renderer_ && renderer_->GetWireframeGrid() && 
+                t.resolution.x <= maxSafeResolution && t.resolution.y <= maxSafeResolution) {
+                renderer_->GetWireframeGrid()->generateGrid(t, mesh);
+            }
+            markDirty();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Creates a Dota-like tile grid: resolution=(tiles+1), size=tilesX*tileSize.\nHeights become discrete levels (multiples of Height Step).");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Hotkeys: Q=Height Brush, R=Ramp/Path, [ ]=Radius");
+
+        const char* tileToolNames[] = { "Height Brush", "Ramp/Path" };
+        int tool = static_cast<int>(tileTool_);
+        if (ImGui::Combo("Tool", &tool, tileToolNames, IM_ARRAYSIZE(tileToolNames))) {
+            tileTool_ = static_cast<TileTool>(tool);
+        }
+
+        ImGui::SliderInt("Tile Brush Radius (tiles)", &tileBrushRadiusTiles_, 1, 16);
+
+        if (tileTool_ == TileTool::HeightBrush) {
+            ImGui::InputInt("Flatten Level", &tileFlattenLevel_);
+            ImGui::Text("Controls: LMB raise. Ctrl+LMB lower. Shift+LMB flatten to level.");
+        } else {
+            ImGui::SliderInt("Ramp Width (tiles)", &tileRampWidthTiles_, 1, 8);
+            ImGui::Text("Controls: Drag LMB to draw a ramp path (start->end).");
+        }
     }
-    
-    // Falloff Type Selection
-    ImGui::Text("Falloff Type:");
-    const char* falloffTypes[] = { "Linear", "Smooth", "Gaussian", "Sharp" };
-    int currentFalloff = static_cast<int>(currentFalloffType_);
-    if (ImGui::Combo("##FalloffType", &currentFalloff, falloffTypes, IM_ARRAYSIZE(falloffTypes))) {
-        currentFalloffType_ = static_cast<WorldEditor::TerrainTools::FalloffType>(currentFalloff);
+
+    if (terrainE == INVALID_ENTITY) {
+        ImGui::EndDisabled();
     }
-    
-    // Brush Settings
-    ImGui::SliderFloat("Brush Radius", &terrainBrushRadius_, 0.25f, 50.0f, "%.2f");
-    ImGui::SliderFloat("Brush Strength", &terrainBrushStrength_, 0.1f, 50.0f, "%.2f");
-    
-    // Tool-specific settings
-    if (currentBrushType_ == WorldEditor::TerrainTools::BrushType::Flatten) {
-        ImGui::SliderFloat("Target Height", &terrainTargetHeight_, -50.0f, 50.0f, "%.2f");
-    }
-    
-    if (currentBrushType_ == WorldEditor::TerrainTools::BrushType::Smooth) {
-        ImGui::SliderFloat("Smooth Factor", &terrainSmoothFactor_, 0.1f, 1.0f, "%.2f");
-    }
-    
-    if (currentBrushType_ == WorldEditor::TerrainTools::BrushType::Noise) {
-        ImGui::SliderFloat("Noise Scale", &terrainNoiseScale_, 0.01f, 5.0f, "%.3f");
-    }
-    
-    ImGui::Text("Controls: LMB apply tool. Shift = invert (sculpt). RMB = camera look.");
-    if (terrainSculptRequireCtrl_) {
-        ImGui::Text("Safe Mode: hold Ctrl while sculpting.");
-    }
-    
+
     ImGui::Separator();
     ImGui::Text("Visualization:");
     ImGui::Checkbox("Show Wireframe", &showWireframe_);
     ImGui::Checkbox("Unreal Viewport (Sky + Checker)", &unrealViewportStyle_);
     if (unrealViewportStyle_) {
         ImGui::SliderFloat("Checker Cell Size", &checkerCellSize_, 0.25f, 32.0f, "%.2f");
-    }
-    
-    if (!terrainEditEnabled_) {
-        ImGui::EndDisabled();
     }
 }
 
@@ -950,7 +1285,6 @@ void EditorUI::drawViewport(World& world) {
 }
 
 void EditorUI::drawGameView(World& world) {
-    (void)world;
     // Only show Game View while game mode is active (PIE-like).
     if (!gameMode_ || !gameMode_->isGameModeActive()) {
         gameViewRectMin_ = ImVec2(0, 0);
@@ -978,6 +1312,9 @@ void EditorUI::drawGameView(World& world) {
     if (viewportTex_ != 0 && avail.x > 1.0f && avail.y > 1.0f) {
         ImGui::Image(viewportTex_, avail);
         gameViewHovered_ = ImGui::IsItemHovered();
+        
+        // Draw Hero HUD overlay on top of game view
+        drawHeroHUD(world);
     } else {
         ImGui::TextUnformatted("Game View not ready.");
         gameViewHovered_ = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -1782,9 +2119,12 @@ void EditorUI::createTestMap(World& world) {
     terrainTransform.position = Vec3(0.0f, 0.0f, 0.0f);
     
     auto& terrain = world.addComponent<TerrainComponent>(terrainE);
-    terrain.resolution = Vec2i(128, 128);
-    terrain.size = 300.0f;
-    TerrainMesh::ensureHeightmap(terrain);
+    // Initialize tile terrain with test map size matching object coordinates
+    // Test map objects are placed for ~300 unit map
+    // Use 3x3 tiles = 4x4 vertices, size = 3 * 128 = 384 units (close to original 300)
+    // This matches the object placement coordinates in createTestMap
+    WorldEditor::TerrainTools::initTileTerrain(terrain, 3, 3, 128.0f, 128.0f);
+    WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain);
     
     auto& terrainMesh = world.addComponent<MeshComponent>(terrainE);
     terrainMesh.name = "Terrain";
@@ -2053,6 +2393,684 @@ void EditorUI::createTestMap(World& world) {
     
     LOG_INFO("Test map created with terrain and {} objects", 
              objectsCreated);
+}
+
+void EditorUI::drawMOBAGamePanel(World& world) {
+    if (!ImGui::Begin("MOBA Game Control")) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("MOBA Game Management");
+    ImGui::Separator();
+
+    // Game state info
+    bool gameActive = world.isGameActive();
+    f32 gameTime = world.getGameTime();
+    i32 currentWave = world.getCurrentWave();
+    f32 timeToNext = world.getTimeToNextWave();
+
+    ImGui::Text("Game Status: %s", gameActive ? "ACTIVE" : "STOPPED");
+    
+    if (gameActive) {
+        // Format game time as MM:SS
+        i32 minutes = static_cast<i32>(gameTime) / 60;
+        i32 seconds = static_cast<i32>(gameTime) % 60;
+        ImGui::Text("Game Time: %02d:%02d", minutes, seconds);
+        
+        ImGui::Text("Current Wave: %d", currentWave + 1);
+        
+        if (timeToNext >= 0.0f) {
+            ImGui::Text("Next Wave In: %.1fs", timeToNext);
+        } else {
+            ImGui::Text("No More Waves");
+        }
+    }
+
+    ImGui::Separator();
+
+    // Game control buttons
+    if (ImGui::Button("Start Game", ImVec2(100, 30))) {
+        world.startGame();
+        setDirty(true);
+    }
+    
+    ImGui::SameLine();
+    if (ImGui::Button("Pause Game", ImVec2(100, 30))) {
+        world.pauseGame();
+        setDirty(true);
+    }
+    
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Game", ImVec2(100, 30))) {
+        world.resetGame();
+        setDirty(true);
+    }
+
+    ImGui::Separator();
+
+    // Entity counts for debugging
+    auto& registry = world.getEntityManager().getRegistry();
+    
+    auto creepView = registry.view<CreepComponent>();
+    auto projectileView = registry.view<ProjectileComponent>();
+    auto towerView = registry.view<ObjectComponent>();
+    
+    i32 creepCount = 0;
+    i32 radiantCreeps = 0;
+    i32 direCreeps = 0;
+    
+    for (auto entity : creepView) {
+        auto& creep = creepView.get<CreepComponent>(entity);
+        if (creep.state != CreepState::Dead) {
+            creepCount++;
+            if (creep.teamId == 1) radiantCreeps++;
+            else if (creep.teamId == 2) direCreeps++;
+        }
+    }
+    
+    i32 projectileCount = 0;
+    for (auto entity : projectileView) {
+        auto& proj = projectileView.get<ProjectileComponent>(entity);
+        if (proj.active) projectileCount++;
+    }
+    
+    i32 towerCount = 0;
+    i32 radiantTowers = 0;
+    i32 direTowers = 0;
+    
+    for (auto entity : towerView) {
+        auto& obj = towerView.get<ObjectComponent>(entity);
+        if (obj.type == ObjectType::Tower) {
+            towerCount++;
+            if (obj.teamId == 1) radiantTowers++;
+            else if (obj.teamId == 2) direTowers++;
+        }
+    }
+
+    ImGui::Text("Live Entities:");
+    ImGui::Text("  Total Creeps: %d", creepCount);
+    ImGui::Text("    Radiant: %d", radiantCreeps);
+    ImGui::Text("    Dire: %d", direCreeps);
+    ImGui::Text("  Active Projectiles: %d", projectileCount);
+    ImGui::Text("  Towers: %d", towerCount);
+    ImGui::Text("    Radiant: %d", radiantTowers);
+    ImGui::Text("    Dire: %d", direTowers);
+
+    ImGui::Separator();
+
+    // Quick spawn buttons for testing
+    if (ImGui::CollapsingHeader("Debug Spawning")) {
+        if (ImGui::Button("Spawn Test Creep Wave")) {
+            // Find a creep spawn point
+            auto spawnView = registry.view<ObjectComponent, TransformComponent>();
+            Entity spawnPoint = INVALID_ENTITY;
+            
+            for (auto entity : spawnView) {
+                auto& obj = spawnView.get<ObjectComponent>(entity);
+                if (obj.type == ObjectType::CreepSpawn && obj.teamId == 1) {
+                    spawnPoint = entity;
+                    break;
+                }
+            }
+            
+            if (spawnPoint != INVALID_ENTITY) {
+                // Get CreepSystem and spawn test creeps
+                if (auto* creepSystem = dynamic_cast<CreepSystem*>(world.getSystem("CreepSystem"))) {
+                    creepSystem->spawnCreep(spawnPoint, CreepType::Melee, 1, CreepLane::Middle);
+                    creepSystem->spawnCreep(spawnPoint, CreepType::Ranged, 1, CreepLane::Middle);
+                    setDirty(true);
+                }
+            }
+        }
+        
+        if (ImGui::Button("Clear All Creeps")) {
+            Vector<Entity> toDestroy;
+            for (auto entity : creepView) {
+                toDestroy.push_back(entity);
+            }
+            for (Entity entity : toDestroy) {
+                world.destroyEntity(entity);
+            }
+            setDirty(true);
+        }
+    }
+
+    ImGui::End();
+}
+
+// ============================================================================
+// Hero HUD (Dota-like interface)
+// ============================================================================
+
+void EditorUI::drawHeroHUD(World& world) {
+    // Get HeroSystem and player hero
+    auto* heroSystem = dynamic_cast<HeroSystem*>(world.getSystem("HeroSystem"));
+    if (!heroSystem) return;
+    
+    Entity playerHero = heroSystem->getPlayerHero();
+    if (playerHero == INVALID_ENTITY) return;
+    
+    auto& registry = world.getEntityManager().getRegistry();
+    if (!registry.valid(playerHero)) return;
+    
+    auto* heroComp = registry.try_get<HeroComponent>(playerHero);
+    if (!heroComp) return;
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 viewMin = gameViewRectMin_;
+    const ImVec2 viewMax = gameViewRectMax_;
+    const float viewWidth = viewMax.x - viewMin.x;
+    const float viewHeight = viewMax.y - viewMin.y;
+    
+    if (viewWidth < 100 || viewHeight < 100) return;
+    
+    // ========== Bottom Center HUD Panel ==========
+    const float hudHeight = 120.0f;
+    const float hudWidth = 600.0f;
+    const float hudX = viewMin.x + (viewWidth - hudWidth) * 0.5f;
+    const float hudY = viewMax.y - hudHeight - 10.0f;
+    
+    // HUD Background
+    drawList->AddRectFilled(
+        ImVec2(hudX, hudY),
+        ImVec2(hudX + hudWidth, hudY + hudHeight),
+        IM_COL32(20, 20, 25, 220),
+        8.0f
+    );
+    drawList->AddRect(
+        ImVec2(hudX, hudY),
+        ImVec2(hudX + hudWidth, hudY + hudHeight),
+        IM_COL32(60, 60, 70, 255),
+        8.0f, 0, 2.0f
+    );
+    
+    // ========== Hero Portrait (Left) ==========
+    const float portraitSize = 80.0f;
+    const float portraitX = hudX + 15.0f;
+    const float portraitY = hudY + 20.0f;
+    
+    // Portrait background
+    ImU32 portraitColor = heroComp->teamId == 1 ? IM_COL32(40, 80, 150, 255) : IM_COL32(150, 50, 50, 255);
+    drawList->AddRectFilled(
+        ImVec2(portraitX, portraitY),
+        ImVec2(portraitX + portraitSize, portraitY + portraitSize),
+        portraitColor,
+        4.0f
+    );
+    
+    // Hero name
+    const char* heroName = heroComp->heroName.c_str();
+    drawList->AddText(ImVec2(portraitX + 5, portraitY + 5), IM_COL32(255, 255, 255, 255), heroName);
+    
+    // Level
+    char levelText[16];
+    snprintf(levelText, sizeof(levelText), "Lv %d", heroComp->level);
+    drawList->AddText(ImVec2(portraitX + 5, portraitY + portraitSize - 20), IM_COL32(255, 215, 0, 255), levelText);
+    
+    // ========== HP/Mana Bars ==========
+    const float barWidth = 180.0f;
+    const float barHeight = 20.0f;
+    const float barX = portraitX + portraitSize + 15.0f;
+    const float hpBarY = portraitY + 10.0f;
+    const float manaBarY = hpBarY + barHeight + 8.0f;
+    
+    // HP Bar background
+    drawList->AddRectFilled(
+        ImVec2(barX, hpBarY),
+        ImVec2(barX + barWidth, hpBarY + barHeight),
+        IM_COL32(40, 20, 20, 255),
+        4.0f
+    );
+    
+    // HP Bar fill
+    float hpPercent = heroComp->maxHealth > 0 ? heroComp->currentHealth / heroComp->maxHealth : 0.0f;
+    hpPercent = std::clamp(hpPercent, 0.0f, 1.0f);
+    drawList->AddRectFilled(
+        ImVec2(barX, hpBarY),
+        ImVec2(barX + barWidth * hpPercent, hpBarY + barHeight),
+        IM_COL32(50, 180, 50, 255),
+        4.0f
+    );
+    
+    // HP Text
+    char hpText[32];
+    snprintf(hpText, sizeof(hpText), "%.0f / %.0f", heroComp->currentHealth, heroComp->maxHealth);
+    ImVec2 hpTextSize = ImGui::CalcTextSize(hpText);
+    drawList->AddText(
+        ImVec2(barX + (barWidth - hpTextSize.x) * 0.5f, hpBarY + 2),
+        IM_COL32(255, 255, 255, 255),
+        hpText
+    );
+    
+    // Mana Bar background
+    drawList->AddRectFilled(
+        ImVec2(barX, manaBarY),
+        ImVec2(barX + barWidth, manaBarY + barHeight),
+        IM_COL32(20, 20, 50, 255),
+        4.0f
+    );
+    
+    // Mana Bar fill
+    float manaPercent = heroComp->maxMana > 0 ? heroComp->currentMana / heroComp->maxMana : 0.0f;
+    manaPercent = std::clamp(manaPercent, 0.0f, 1.0f);
+    drawList->AddRectFilled(
+        ImVec2(barX, manaBarY),
+        ImVec2(barX + barWidth * manaPercent, manaBarY + barHeight),
+        IM_COL32(50, 100, 200, 255),
+        4.0f
+    );
+    
+    // Mana Text
+    char manaText[32];
+    snprintf(manaText, sizeof(manaText), "%.0f / %.0f", heroComp->currentMana, heroComp->maxMana);
+    ImVec2 manaTextSize = ImGui::CalcTextSize(manaText);
+    drawList->AddText(
+        ImVec2(barX + (barWidth - manaTextSize.x) * 0.5f, manaBarY + 2),
+        IM_COL32(255, 255, 255, 255),
+        manaText
+    );
+    
+    // ========== Ability Bar ==========
+    drawHeroAbilityBar(*heroComp, ImVec2(barX, manaBarY + barHeight + 15.0f));
+    
+    // ========== Inventory (Right of abilities) ==========
+    const float invX = barX + 220.0f; // After 4 ability slots
+    const float invY = manaBarY + barHeight + 15.0f;
+    drawHeroInventory(*heroComp, ImVec2(invX, invY));
+    
+    // ========== Stats Panel (Right side) ==========
+    const float statsX = hudX + hudWidth - 150.0f;
+    const float statsY = hudY + 15.0f;
+    
+    char statsText[256];
+    snprintf(statsText, sizeof(statsText),
+        "DMG: %.0f\n"
+        "ARM: %.1f\n"
+        "SPD: %.0f\n"
+        "AS: %.0f",
+        heroComp->damage,
+        heroComp->armor,
+        heroComp->moveSpeed,
+        heroComp->attackSpeed
+    );
+    drawList->AddText(ImVec2(statsX, statsY), IM_COL32(200, 200, 200, 255), statsText);
+    
+    // ========== Gold Display ==========
+    char goldText[32];
+    snprintf(goldText, sizeof(goldText), "Gold: %d", heroComp->gold);
+    drawList->AddText(
+        ImVec2(statsX, statsY + 70),
+        IM_COL32(255, 215, 0, 255),
+        goldText
+    );
+    
+    // ========== KDA Display (Top) ==========
+    const float kdaX = viewMin.x + 10.0f;
+    const float kdaY = viewMin.y + 10.0f;
+    
+    char kdaText[64];
+    snprintf(kdaText, sizeof(kdaText), "K/D/A: %d/%d/%d  LH: %d",
+        heroComp->kills, heroComp->deaths, heroComp->assists, heroComp->lastHits);
+    
+    drawList->AddRectFilled(
+        ImVec2(kdaX - 5, kdaY - 3),
+        ImVec2(kdaX + 180, kdaY + 20),
+        IM_COL32(0, 0, 0, 180),
+        4.0f
+    );
+    drawList->AddText(ImVec2(kdaX, kdaY), IM_COL32(255, 255, 255, 255), kdaText);
+    
+    // ========== Experience Bar ==========
+    const float expBarWidth = 180.0f;
+    const float expBarHeight = 6.0f;
+    const float expBarX = barX;
+    const float expBarY = hpBarY - 10.0f;
+    
+    // Exp bar background
+    drawList->AddRectFilled(
+        ImVec2(expBarX, expBarY),
+        ImVec2(expBarX + expBarWidth, expBarY + expBarHeight),
+        IM_COL32(30, 30, 30, 255),
+        2.0f
+    );
+    
+    // Exp bar fill
+    float expPercent = heroComp->experienceToNextLevel > 0 ? 
+        heroComp->experience / heroComp->experienceToNextLevel : 0.0f;
+    expPercent = std::clamp(expPercent, 0.0f, 1.0f);
+    drawList->AddRectFilled(
+        ImVec2(expBarX, expBarY),
+        ImVec2(expBarX + expBarWidth * expPercent, expBarY + expBarHeight),
+        IM_COL32(180, 120, 255, 255),
+        2.0f
+    );
+}
+
+void EditorUI::drawHeroAbilityBar(const HeroComponent& hero, const ImVec2& screenPos) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    const float abilitySize = 45.0f;
+    const float spacing = 5.0f;
+    float x = screenPos.x;
+    float y = screenPos.y;
+    
+    // Show ability points indicator if available
+    if (hero.abilityPoints > 0) {
+        char apText[32];
+        snprintf(apText, sizeof(apText), "Skill Points: %d", hero.abilityPoints);
+        drawList->AddText(ImVec2(x, y - 18), IM_COL32(255, 215, 0, 255), apText);
+    }
+    
+    for (int i = 0; i < 4; ++i) {
+        const auto& ability = hero.abilities[i];
+        
+        // Create invisible button for hover detection and tooltip (must be before drawing)
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        char buttonId[32];
+        snprintf(buttonId, sizeof(buttonId), "ability_%d", i);
+        ImGui::InvisibleButton(buttonId, ImVec2(abilitySize, abilitySize));
+        
+        // Ability background
+        ImU32 bgColor = IM_COL32(40, 40, 50, 255);
+        if (ability.level == 0) {
+            bgColor = IM_COL32(30, 30, 30, 200); // Not learned
+        } else if (ability.currentCooldown > 0.0f) {
+            bgColor = IM_COL32(60, 30, 30, 255); // On cooldown
+        }
+        
+        // Golden border if can level up
+        bool canLevelUp = hero.abilityPoints > 0 && ability.level < ability.data.maxLevel;
+        // Ultimate requires level 6/12/18
+        if (i == 3 && canLevelUp) {
+            i32 requiredLevel = 6 + (ability.level * 6);
+            if (hero.level < requiredLevel) {
+                canLevelUp = false;
+            }
+        }
+        
+        drawList->AddRectFilled(
+            ImVec2(x, y),
+            ImVec2(x + abilitySize, y + abilitySize),
+            bgColor,
+            4.0f
+        );
+        
+        // Border - golden if can level up
+        ImU32 borderColor;
+        if (canLevelUp) {
+            borderColor = IM_COL32(255, 215, 0, 255); // Gold
+        } else if (ability.level > 0) {
+            borderColor = IM_COL32(100, 100, 120, 255);
+        } else {
+            borderColor = IM_COL32(50, 50, 60, 255);
+        }
+        drawList->AddRect(
+            ImVec2(x, y),
+            ImVec2(x + abilitySize, y + abilitySize),
+            borderColor,
+            4.0f, 0, canLevelUp ? 3.0f : 2.0f
+        );
+        
+        // "+" indicator for level up (Ctrl+hotkey)
+        if (canLevelUp) {
+            drawList->AddCircleFilled(
+                ImVec2(x + abilitySize - 8, y + 8),
+                8.0f,
+                IM_COL32(255, 215, 0, 255)
+            );
+            drawList->AddText(
+                ImVec2(x + abilitySize - 12, y + 1),
+                IM_COL32(0, 0, 0, 255),
+                "+"
+            );
+        }
+        
+        // Hotkey
+        char hotkeyText[2] = { ability.data.hotkey, '\0' };
+        drawList->AddText(ImVec2(x + 3, y + 2), IM_COL32(255, 255, 255, 200), hotkeyText);
+        
+        // Level indicator
+        if (ability.level > 0) {
+            char levelText[8];
+            snprintf(levelText, sizeof(levelText), "%d", ability.level);
+            drawList->AddText(
+                ImVec2(x + abilitySize - 12, y + abilitySize - 15),
+                IM_COL32(255, 215, 0, 255),
+                levelText
+            );
+        }
+        
+        // Cooldown overlay
+        if (ability.currentCooldown > 0.0f && ability.level > 0) {
+            float cdPercent = ability.currentCooldown / ability.data.cooldown;
+            cdPercent = std::clamp(cdPercent, 0.0f, 1.0f);
+            
+            drawList->AddRectFilled(
+                ImVec2(x, y + abilitySize * (1.0f - cdPercent)),
+                ImVec2(x + abilitySize, y + abilitySize),
+                IM_COL32(0, 0, 0, 150),
+                4.0f
+            );
+            
+            // Cooldown text
+            char cdText[8];
+            snprintf(cdText, sizeof(cdText), "%.1f", ability.currentCooldown);
+            ImVec2 cdTextSize = ImGui::CalcTextSize(cdText);
+            drawList->AddText(
+                ImVec2(x + (abilitySize - cdTextSize.x) * 0.5f, y + (abilitySize - cdTextSize.y) * 0.5f),
+                IM_COL32(255, 255, 255, 255),
+                cdText
+            );
+        }
+        
+        // Mana cost display (only if ability is learned and has mana cost) - LEFT SIDE
+        if (ability.level > 0 && ability.data.manaCost > 0.0f) {
+            char manaText[16];
+            snprintf(manaText, sizeof(manaText), "%.0f", ability.data.manaCost);
+            
+            // Check if hero has enough mana
+            bool hasEnoughMana = hero.currentMana >= ability.data.manaCost;
+            ImU32 manaColor = hasEnoughMana ? IM_COL32(100, 150, 255, 255) : IM_COL32(255, 100, 100, 255);
+            
+            // Draw small background for mana text (left side)
+            ImVec2 manaTextSize = ImGui::CalcTextSize(manaText);
+            float manaTextX = x + 2.0f;
+            float manaTextY = y + abilitySize - 12.0f;
+            
+            // Small background rectangle for better readability
+            drawList->AddRectFilled(
+                ImVec2(x + 1.0f, manaTextY - 1.0f),
+                ImVec2(x + manaTextSize.x + 3.0f, y + abilitySize - 1.0f),
+                IM_COL32(0, 0, 0, 180),
+                2.0f
+            );
+            
+            // Draw mana cost text
+            drawList->AddText(
+                ImVec2(manaTextX, manaTextY),
+                manaColor,
+                manaText
+            );
+        }
+        
+        // Check hover and show tooltip (after drawing so tooltip appears on top)
+        if (ImGui::IsItemHovered()) {
+            drawAbilityTooltip(ability, hero);
+        }
+        
+        x += abilitySize + spacing;
+    }
+}
+
+void EditorUI::drawAbilityTooltip(const HeroAbility& ability, const HeroComponent& hero) {
+    ImGui::BeginTooltip();
+    
+    // Ability name (golden, bold)
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.84f, 0.0f, 1.0f)); // Gold color
+    ImGui::PushFont(nullptr); // Use default font for now, could use bold font
+    ImGui::TextUnformatted(ability.data.name.c_str());
+    ImGui::PopFont();
+    ImGui::PopStyleColor();
+    
+    ImGui::Separator();
+    
+    // Level indicator
+    if (ability.level > 0) {
+        ImGui::Text("Level: %d / %d", ability.level, ability.data.maxLevel);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::Text("Not learned");
+        ImGui::PopStyleColor();
+    }
+    
+    // Description
+    if (!ability.data.description.empty()) {
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f); // Wrap at reasonable width
+        ImGui::TextWrapped("%s", ability.data.description.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    
+    // Stats section
+    
+    // Mana cost
+    if (ability.data.manaCost > 0.0f) {
+        bool hasEnoughMana = hero.currentMana >= ability.data.manaCost;
+        ImVec4 manaColor = hasEnoughMana ? ImVec4(0.4f, 0.6f, 1.0f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, manaColor);
+        ImGui::Text("Mana Cost: %.0f", ability.data.manaCost);
+        ImGui::PopStyleColor();
+    }
+    
+    // Cooldown
+    if (ability.data.cooldown > 0.0f) {
+        ImGui::Text("Cooldown: %.1fs", ability.data.cooldown);
+        if (ability.currentCooldown > 0.0f) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
+            ImGui::Text("(%.1fs remaining)", ability.currentCooldown);
+            ImGui::PopStyleColor();
+        }
+    }
+    
+    // Cast range
+    if (ability.data.castRange > 0.0f && ability.data.targetType != AbilityTargetType::Passive) {
+        ImGui::Text("Cast Range: %.0f", ability.data.castRange);
+    }
+    
+    // Damage
+    if (ability.data.damage > 0.0f) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
+        ImGui::Text("Damage: %.0f", ability.data.damage);
+        ImGui::PopStyleColor();
+    }
+    
+    // Radius (for AoE abilities)
+    if (ability.data.radius > 0.0f) {
+        ImGui::Text("Radius: %.0f", ability.data.radius);
+    }
+    
+    // Duration
+    if (ability.data.duration > 0.0f) {
+        ImGui::Text("Duration: %.1fs", ability.data.duration);
+    }
+    
+    // Target type
+    if (ability.data.targetType != AbilityTargetType::Passive) {
+        ImGui::Spacing();
+        const char* targetTypeStr = "";
+        switch (ability.data.targetType) {
+            case AbilityTargetType::NoTarget:
+                targetTypeStr = "No Target";
+                break;
+            case AbilityTargetType::PointTarget:
+                targetTypeStr = "Point Target";
+                break;
+            case AbilityTargetType::UnitTarget:
+                targetTypeStr = "Unit Target";
+                break;
+            case AbilityTargetType::VectorTarget:
+                targetTypeStr = "Vector Target";
+                break;
+            default:
+                break;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.9f, 1.0f));
+        ImGui::Text("Target: %s", targetTypeStr);
+        ImGui::PopStyleColor();
+    }
+    
+    // Hotkey hint
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::Text("Hotkey: [%c]", ability.data.hotkey);
+    if (ability.level < ability.data.maxLevel && hero.abilityPoints > 0) {
+        ImGui::SameLine();
+        ImGui::Text(" | Level up: Ctrl+%c", ability.data.hotkey);
+    }
+    ImGui::PopStyleColor();
+    
+    ImGui::EndTooltip();
+}
+
+void EditorUI::drawHeroInventory(const HeroComponent& hero, const ImVec2& screenPos) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    const float slotSize = 40.0f;
+    const float spacing = 3.0f;
+    float x = screenPos.x;
+    float y = screenPos.y;
+    
+    // Item hotkeys: Z, X, C, V, B, N
+    const char itemHotkeys[6] = { 'Z', 'X', 'C', 'V', 'B', 'N' };
+    
+    // Draw 6 inventory slots (2 rows x 3 columns)
+    for (int i = 0; i < 6; ++i) {
+        float slotX = x + (i % 3) * (slotSize + spacing);
+        float slotY = y + (i / 3) * (slotSize + spacing);
+        
+        const auto& item = hero.inventory[i];
+        
+        // Slot background
+        ImU32 bgColor = item.data.name.empty() ? IM_COL32(30, 30, 35, 255) : IM_COL32(50, 50, 60, 255);
+        drawList->AddRectFilled(
+            ImVec2(slotX, slotY),
+            ImVec2(slotX + slotSize, slotY + slotSize),
+            bgColor,
+            3.0f
+        );
+        
+        // Border
+        drawList->AddRect(
+            ImVec2(slotX, slotY),
+            ImVec2(slotX + slotSize, slotY + slotSize),
+            IM_COL32(70, 70, 80, 255),
+            3.0f
+        );
+        
+        // Hotkey in corner
+        char hotkeyText[2] = { itemHotkeys[i], '\0' };
+        drawList->AddText(
+            ImVec2(slotX + 2, slotY + 2),
+            IM_COL32(180, 180, 180, 200),
+            hotkeyText
+        );
+        
+        // Item name (abbreviated)
+        if (!item.data.name.empty()) {
+            String shortName = item.data.name.substr(0, 3);
+            drawList->AddText(
+                ImVec2(slotX + 3, slotY + slotSize - 15),
+                IM_COL32(255, 255, 255, 200),
+                shortName.c_str()
+            );
+        }
+    }
 }
 
 } // namespace WorldEditor
