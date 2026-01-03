@@ -558,7 +558,7 @@ CStyleManager::CStyleManager() {
     m_defaultStyle.opacity = 1.0f;
     m_defaultStyle.visible = true;
     m_defaultStyle.color = Color::White();
-    m_defaultStyle.fontSize = 16.0f;
+    m_defaultStyle.fontSize = 24.0f;  // Increased from 16.0f for better readability
 }
 
 void CStyleManager::LoadGlobalStyles(const std::string& path) {

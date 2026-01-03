@@ -97,9 +97,6 @@ public:
     void OnRegisterClicked();
     void OnGuestClicked();
     
-    // Get AuthClient for other states to use
-    auth::AuthClient* GetAuthClient() { return m_authClient.get(); }
-    
 private:
     void CreateUI();
     void DestroyUI();
@@ -344,6 +341,9 @@ public:
     LoadingState* GetLoadingState();
     InGameState* GetInGameState();
     
+    // Global AuthClient (shared across states)
+    auth::AuthClient* GetAuthClient() { return m_authClient.get(); }
+    
 private:
     GameStateManager() = default;
     
@@ -359,6 +359,9 @@ private:
     std::unique_ptr<HeroesState> m_heroesState;
     std::unique_ptr<LoadingState> m_loadingState;
     std::unique_ptr<InGameState> m_inGameState;
+    
+    // Global AuthClient (shared across all states)
+    std::unique_ptr<auth::AuthClient> m_authClient;
 };
 
 // ============ Convenience Functions ============

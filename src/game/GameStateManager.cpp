@@ -17,6 +17,10 @@ GameStateManager& GameStateManager::Instance() {
 void GameStateManager::Initialize() {
     LOG_INFO("GameStateManager::Initialize()");
     
+    // Create global AuthClient
+    m_authClient = std::make_unique<auth::AuthClient>();
+    LOG_INFO("AuthClient created");
+    
     // Pre-create all states
     m_loginState = std::make_unique<LoginState>();
     m_loginState->m_manager = this;

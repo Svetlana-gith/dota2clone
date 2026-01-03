@@ -63,7 +63,7 @@ struct RenderCommand {
 struct FontInfo {
     // Default Panorama font (project-provided).
     std::string family = "Roboto Condensed";
-    f32 size = 18.0f;
+    f32 size = 24.0f;  // Increased from 18.0f for better readability
     bool bold = false;
     bool italic = false;
     // Extra spacing between glyphs (pixels). Applied between characters on the same line.

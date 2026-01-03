@@ -350,10 +350,12 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
                              strnlen(payload.passwordHashSHA256, kPasswordHashMax));
     
     spdlog::info("Login request for username: {}", username);
+    spdlog::debug("Password hash length: {}", passwordHash.length());
     
     // Get account
     Account account;
     if (!db_.GetAccountByUsername(username, account)) {
+        spdlog::warn("Account not found: {}", username);
         security_.RecordAttempt(clientIP, RateLimitType::Login);
         SendError(sender, header.requestId, AuthResult::InvalidCredentials,
                   "Invalid username or password");
@@ -366,10 +368,13 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
         return;
     }
     
+    spdlog::debug("Account found: {} (ID: {})", account.username, account.accountId);
+    
     // Check if account is banned
     if (account.isBanned) {
         u64 now = static_cast<u64>(std::time(nullptr));
         if (account.banUntil == 0 || now < account.banUntil) {
+            spdlog::warn("Account {} is banned", account.accountId);
             SendError(sender, header.requestId, AuthResult::AccountBanned,
                       account.banReason.empty() ? "Account is banned" : account.banReason);
             return;
@@ -377,7 +382,9 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
     }
     
     // Verify password
+    spdlog::debug("Verifying password for account {}", account.accountId);
     if (!security_.VerifyPassword(passwordHash, account.passwordHash)) {
+        spdlog::warn("Password verification failed for account {}", account.accountId);
         security_.RecordAttempt(clientIP, RateLimitType::Login);
         SendError(sender, header.requestId, AuthResult::InvalidCredentials,
                   "Invalid username or password");
@@ -391,6 +398,8 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
         return;
     }
     
+    spdlog::debug("Password verified successfully");
+    
     // Check for suspicious activity
     if (security_.IsSuspiciousActivity(account.accountId, clientIP)) {
         spdlog::warn("Suspicious login activity for account {} from {}", 
@@ -403,8 +412,11 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
     u64 now = static_cast<u64>(std::time(nullptr));
     u64 expiresAt = now + kSessionExpirationSeconds;
     
+    spdlog::debug("Creating session for account {}", account.accountId);
+    
     // Create session
     if (!db_.CreateSession(account.accountId, sessionToken, expiresAt, clientIP)) {
+        spdlog::error("Failed to create session for account {}", account.accountId);
         SendError(sender, header.requestId, AuthResult::ServerError,
                   "Failed to create session");
         return;
@@ -434,6 +446,8 @@ void AuthServer::HandleLoginRequest(const AuthNetworkAddress& sender,
     response.requires2FA = 0;  // TODO: Check 2FA status
     response.accountId = account.accountId;
     CopyString(response.sessionToken, sizeof(response.sessionToken), sessionToken);
+    
+    spdlog::debug("Sending login response to {}", sender.toString());
     
     SendResponse(sender, AuthMessageType::LoginResponse, account.accountId,
                  header.requestId, &response, sizeof(response));

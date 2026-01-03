@@ -5,6 +5,7 @@
 #include "../ui/panorama/CStyleSheet.h"
 #include "../ui/panorama/GameEvents.h"
 #include "network/MatchmakingClient.h"
+#include "auth/AuthClient.h"
 #include <cstdio>
 
 namespace Game {
@@ -50,7 +51,8 @@ void MainMenuState::OnEnter() {
 void MainMenuState::OnExit() { DestroyUI(); }
 
 // Scaled helpers
-static float S(float v) { return v * 1.35f; } // Scale factor (35% increase)
+static float S(float v) { return v * 1.35f; } // Scale factor (35% increase) for layout
+static float F(float v) { return v * 1.0f; } // Font scale (100% - readable size)
 
 static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, float h, Panorama::Color bg) {
     auto p = std::make_shared<Panorama::CPanel2D>(id);
@@ -64,7 +66,7 @@ static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, flo
 
 static std::shared_ptr<Panorama::CLabel> L(const std::string& text, float size, Panorama::Color col) {
     auto l = std::make_shared<Panorama::CLabel>(text, text);
-    l->GetStyle().fontSize = S(size);
+    l->GetStyle().fontSize = F(size);  // Use F() instead of S() for fonts
     l->GetStyle().color = col;
     return l;
 }
@@ -128,7 +130,7 @@ void MainMenuState::CreateUI() {
         nb->GetStyle().backgroundColor = Panorama::Color(0.15f, 0.15f, 0.18f, 0.8f);
         nb->GetStyle().borderWidth = 0.0f;
         nb->GetStyle().borderRadius = 0.0f;
-        nb->GetStyle().fontSize = S(11);
+        nb->GetStyle().fontSize = F(11);
         nb->GetStyle().color = light;
         nb->GetStyle().marginLeft = Panorama::Length::Px(S(48 + i * 61));
         nb->GetStyle().marginTop = Panorama::Length::Px(0); // No top margin
@@ -253,7 +255,7 @@ void MainMenuState::CreateUI() {
     lkb->GetStyle().borderRadius = S(2);
     lkb->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     lkb->GetStyle().marginTop = Panorama::Length::Px(S(30));
-    lkb->GetStyle().fontSize = S(9);
+    lkb->GetStyle().fontSize = F(9);
     lkb->GetStyle().color = Panorama::Color::White();
     bp->AddChild(lkb);
 
@@ -604,7 +606,7 @@ void MainMenuState::CreateUI() {
     m_ui->playButton->GetStyle().height = Panorama::Length::Px(45);
     m_ui->playButton->GetStyle().backgroundColor = greenBtn;
     m_ui->playButton->GetStyle().borderRadius = S(3);
-    m_ui->playButton->GetStyle().fontSize = S(14);
+    m_ui->playButton->GetStyle().fontSize = F(14);
     m_ui->playButton->GetStyle().color = Panorama::Color::White();
     m_ui->playButton->GetStyle().marginLeft = Panorama::Length::Px(contentWidth - 200);
     m_ui->playButton->GetStyle().marginTop = Panorama::Length::Px(12);
@@ -633,7 +635,7 @@ void MainMenuState::CreateUI() {
     m_ui->findingCancelButton->GetStyle().height = Panorama::Length::Px(S(30));
     m_ui->findingCancelButton->GetStyle().backgroundColor = Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f);
     m_ui->findingCancelButton->GetStyle().borderRadius = S(3);
-    m_ui->findingCancelButton->GetStyle().fontSize = S(14);
+    m_ui->findingCancelButton->GetStyle().fontSize = F(14);
     m_ui->findingCancelButton->GetStyle().color = Panorama::Color::White();
     // Position inside 180px button (right aligned)
     m_ui->findingCancelButton->GetStyle().marginLeft = Panorama::Length::Px(S(180 - 36));
@@ -679,7 +681,7 @@ void MainMenuState::CreateUI() {
     m_ui->cancelSearchButton->GetStyle().height = Panorama::Length::Px(S(40));
     m_ui->cancelSearchButton->GetStyle().backgroundColor = Panorama::Color(0.25f, 0.25f, 0.3f, 0.95f);
     m_ui->cancelSearchButton->GetStyle().borderRadius = S(3);
-    m_ui->cancelSearchButton->GetStyle().fontSize = S(13);
+    m_ui->cancelSearchButton->GetStyle().fontSize = F(13);
     m_ui->cancelSearchButton->GetStyle().color = Panorama::Color::White();
     m_ui->cancelSearchButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->cancelSearchButton->GetStyle().marginTop = Panorama::Length::Px(S(95));
@@ -733,7 +735,7 @@ void MainMenuState::CreateUI() {
     m_ui->acceptButton->GetStyle().height = Panorama::Length::Px(S(46));
     m_ui->acceptButton->GetStyle().backgroundColor = Panorama::Color(0.18f, 0.45f, 0.18f, 1.0f);
     m_ui->acceptButton->GetStyle().borderRadius = S(3);
-    m_ui->acceptButton->GetStyle().fontSize = S(14);
+    m_ui->acceptButton->GetStyle().fontSize = F(14);
     m_ui->acceptButton->GetStyle().color = Panorama::Color::White();
     m_ui->acceptButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->acceptButton->GetStyle().marginTop = Panorama::Length::Px(S(115));
@@ -780,7 +782,7 @@ void MainMenuState::CreateUI() {
     m_ui->declineButton->GetStyle().height = Panorama::Length::Px(S(46));
     m_ui->declineButton->GetStyle().backgroundColor = Panorama::Color(0.45f, 0.18f, 0.18f, 1.0f);
     m_ui->declineButton->GetStyle().borderRadius = S(3);
-    m_ui->declineButton->GetStyle().fontSize = S(14);
+    m_ui->declineButton->GetStyle().fontSize = F(14);
     m_ui->declineButton->GetStyle().color = Panorama::Color::White();
     m_ui->declineButton->GetStyle().marginLeft = Panorama::Length::Px(S(210));
     m_ui->declineButton->GetStyle().marginTop = Panorama::Length::Px(S(115));
@@ -983,11 +985,31 @@ void MainMenuState::OnPlayClicked() {
     }
 
     if (!m_mmClient->isConnected()) {
-        // Local dev defaults: coordinator on localhost:27016
-        if (!m_mmClient->connect("127.0.0.1", 27016)) {
+        // Get session token from AuthClient
+        auto* authClient = m_manager->GetAuthClient();
+        if (!authClient || !authClient->IsAuthenticated()) {
+            ConsoleLog("Not authenticated - please login first");
+            LOG_ERROR("No session token set - authentication required before queueing");
+            return;
+        }
+        
+        std::string sessionToken = authClient->GetSessionToken();
+        if (sessionToken.empty()) {
+            ConsoleLog("No session token - please login first");
+            LOG_ERROR("No session token set - authentication required before queueing");
+            return;
+        }
+        
+        // Set session token for matchmaking
+        m_mmClient->setSessionToken(sessionToken);
+        
+        // Connect to matchmaking coordinator on port 27017 (not auth server 27016!)
+        if (!m_mmClient->connect("127.0.0.1", 27017)) {
             ConsoleLog("Failed to connect to matchmaking coordinator");
             return;
         }
+        
+        LOG_INFO("Connected to matchmaking coordinator");
     }
 
     WorldEditor::Matchmaking::MatchPreferences prefs;

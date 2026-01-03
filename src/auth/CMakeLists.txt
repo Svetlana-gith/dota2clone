@@ -25,3 +25,32 @@ target_link_libraries(world_editor_auth
 if(WIN32)
     target_link_libraries(world_editor_auth PUBLIC bcrypt ws2_32)
 endif()
+
+# Authentication Server Executable
+add_executable(AuthServer
+    auth_server_main.cpp
+)
+
+target_link_libraries(AuthServer
+    PRIVATE
+        world_editor_auth
+        world_editor_core
+        spdlog::spdlog
+)
+
+# Add Test User Tool
+add_executable(AddTestUser
+    add_test_user_tool.cpp
+)
+
+target_link_libraries(AddTestUser
+    PRIVATE
+        world_editor_auth
+        world_editor_core
+        spdlog::spdlog
+)
+
+# Install targets
+install(TARGETS AuthServer AddTestUser
+    RUNTIME DESTINATION bin
+)

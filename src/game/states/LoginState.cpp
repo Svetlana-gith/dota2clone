@@ -39,8 +39,8 @@ struct LoginState::LoginUI {
 
 LoginState::LoginState() 
     : m_ui(std::make_unique<LoginUI>())
-    , m_authClient(std::make_unique<auth::AuthClient>()) 
 {
+    // AuthClient теперь глобальный в GameStateManager
 }
 
 LoginState::~LoginState() = default;
@@ -63,8 +63,9 @@ void LoginState::OnExit() {
 }
 
 void LoginState::Update(f32 deltaTime) {
-    if (m_authClient) {
-        m_authClient->Update();
+    auto* authClient = m_manager->GetAuthClient();
+    if (authClient) {
+        authClient->Update();
     }
     
     Panorama::CUIEngine::Instance().Update(deltaTime);
@@ -298,7 +299,10 @@ void LoginState::DestroyUI() {
 }
 
 void LoginState::SetupAuthCallbacks() {
-    m_authClient->SetOnLoginSuccess([this](u64 accountId, const std::string& token) {
+    auto* authClient = m_manager->GetAuthClient();
+    if (!authClient) return;
+    
+    authClient->SetOnLoginSuccess([this](u64 accountId, const std::string& token) {
         LOG_INFO("Login successful! Account ID: {}", accountId);
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ConsoleLog("Login successful!");
@@ -307,13 +311,13 @@ void LoginState::SetupAuthCallbacks() {
         m_manager->ChangeState(EGameState::MainMenu);
     });
     
-    m_authClient->SetOnLoginFailed([this](const std::string& error) {
+    authClient->SetOnLoginFailed([this](const std::string& error) {
         LOG_WARN("Login failed: {}", error);
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ShowError(error);
     });
     
-    m_authClient->SetOnRegisterSuccess([this](u64 accountId, const std::string& token) {
+    authClient->SetOnRegisterSuccess([this](u64 accountId, const std::string& token) {
         LOG_INFO("Registration successful! Account ID: {}", accountId);
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ConsoleLog("Account created successfully!");
@@ -322,13 +326,13 @@ void LoginState::SetupAuthCallbacks() {
         m_manager->ChangeState(EGameState::MainMenu);
     });
     
-    m_authClient->SetOnRegisterFailed([this](const std::string& error) {
+    authClient->SetOnRegisterFailed([this](const std::string& error) {
         LOG_WARN("Registration failed: {}", error);
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ShowError(error);
     });
     
-    m_authClient->SetOnTokenValid([this](u64 accountId) {
+    authClient->SetOnTokenValid([this](u64 accountId) {
         LOG_INFO("Stored token valid! Account ID: {}", accountId);
         ConsoleLog("Session restored!");
         
@@ -336,7 +340,7 @@ void LoginState::SetupAuthCallbacks() {
         m_manager->ChangeState(EGameState::MainMenu);
     });
     
-    m_authClient->SetOnTokenInvalid([this]() {
+    authClient->SetOnTokenInvalid([this]() {
         LOG_INFO("Stored token invalid or expired");
         // Stay on login screen
     });
@@ -356,6 +360,9 @@ void LoginState::ClearError() {
 }
 
 void LoginState::OnLoginClicked() {
+    auto* authClient = m_manager->GetAuthClient();
+    if (!authClient) return;
+    
     // Validate input
     if (m_username.empty()) {
         ShowError("Please enter username");
@@ -367,8 +374,8 @@ void LoginState::OnLoginClicked() {
     }
     
     // Try to connect if not connected
-    if (!m_authClient->IsConnected()) {
-        if (!m_authClient->Connect("127.0.0.1", 27016)) {
+    if (!authClient->IsConnected()) {
+        if (!authClient->Connect("127.0.0.1", 27016)) {
             ShowError("Cannot connect to auth server");
             return;
         }
@@ -380,10 +387,13 @@ void LoginState::OnLoginClicked() {
         m_ui->loadingOverlay->SetVisible(true);
     }
     
-    m_authClient->Login(m_username, m_password);
+    authClient->Login(m_username, m_password);
 }
 
 void LoginState::OnRegisterClicked() {
+    auto* authClient = m_manager->GetAuthClient();
+    if (!authClient) return;
+    
     // Validate input
     if (m_username.length() < 3 || m_username.length() > 20) {
         ShowError("Username must be 3-20 characters");
@@ -409,8 +419,8 @@ void LoginState::OnRegisterClicked() {
     }
     
     // Try to connect if not connected
-    if (!m_authClient->IsConnected()) {
-        if (!m_authClient->Connect("127.0.0.1", 27016)) {
+    if (!authClient->IsConnected()) {
+        if (!authClient->Connect("127.0.0.1", 27016)) {
             ShowError("Cannot connect to auth server");
             return;
         }
@@ -422,14 +432,17 @@ void LoginState::OnRegisterClicked() {
         m_ui->loadingOverlay->SetVisible(true);
     }
     
-    m_authClient->Register(m_username, m_password);
+    authClient->Register(m_username, m_password);
 }
 
 void LoginState::OnGuestClicked() {
+    auto* authClient = m_manager->GetAuthClient();
+    if (!authClient) return;
+    
     LOG_INFO("Playing as guest");
     ConsoleLog("Playing as guest");
     
-    u64 guestId = m_authClient->CreateGuestAccount();
+    u64 guestId = authClient->CreateGuestAccount();
     LOG_INFO("Guest account ID: {}", guestId);
     
     // Transition to main menu

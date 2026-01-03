@@ -40,7 +40,7 @@ void CLabel::Render(CUIRenderer* renderer) {
     if (opacity <= 0) return;
     
     FontInfo font;
-    font.size = m_computedStyle.fontSize.value_or(18.0f);
+    font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
     font.bold = m_computedStyle.fontWeight.has_value() && m_computedStyle.fontWeight.value() == "bold";
     font.family = m_computedStyle.fontFamily.value_or(font.family);
     // Letter spacing is interpreted as PIXELS (CSS-like `letter-spacing`).
@@ -272,6 +272,20 @@ bool CTextEntry::OnTextInput(const std::string& text) {
     return true;
 }
 
+bool CTextEntry::OnMouseDown(f32 x, f32 y, i32 button) {
+    // Вызвать базовый обработчик для установки фокуса
+    bool handled = CPanel2D::OnMouseDown(x, y, button);
+    
+    // При клике левой кнопкой мыши установить курсор в конец текста
+    if (button == 0 && IsPointInPanel(x, y)) {
+        m_cursorPos = static_cast<i32>(m_text.length());
+        m_cursorBlinkTime = 0.0f;  // Сбросить мерцание
+        return true;
+    }
+    
+    return handled;
+}
+
 void CTextEntry::Update(f32 deltaTime) {
     CPanel2D::Update(deltaTime);
     
@@ -291,14 +305,25 @@ void CTextEntry::Render(CUIRenderer* renderer) {
     CPanel2D::Render(renderer);
     if (!renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
-    FontInfo font; font.size = m_computedStyle.fontSize.value_or(18.0f);
-    Color textColor = m_computedStyle.color.value_or(Color::White()); textColor.a *= opacity;
+    
+    // Настроить шрифт из стиля
+    FontInfo font;
+    font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
+    font.family = m_computedStyle.fontFamily.value_or("Roboto Condensed");
+    font.bold = m_computedStyle.fontWeight.has_value() && m_computedStyle.fontWeight.value() == "bold";
+    
+    Color textColor = m_computedStyle.color.value_or(Color::White()); 
+    textColor.a *= opacity;
+    
     std::string displayText = m_isPassword ? std::string(m_text.length(), '*') : m_text;
+    
+    // Отрисовать placeholder или текст
     if (displayText.empty() && !m_placeholder.empty()) {
-        Color pc = textColor; pc.a *= 0.5f;
+        Color pc = textColor; 
+        pc.a *= 0.5f;
         renderer->DrawText(m_placeholder, m_contentBounds, pc, font);
     } else {
-        renderer->DrawText(displayText, m_contentBounds, textColor, font);
+        renderer->DrawText(displayText, m_contentBounds, textColor, font, HorizontalAlign::Left, VerticalAlign::Center);
     }
     
     // Нарисовать курсор, если поле в фокусе
@@ -306,20 +331,27 @@ void CTextEntry::Render(CUIRenderer* renderer) {
         // Мерцание: видим первую половину секунды, невидим вторую
         bool cursorVisible = (m_cursorBlinkTime < 0.5f);
         if (cursorVisible) {
+            // Убедиться что cursorPos в допустимых пределах
+            if (m_cursorPos < 0) m_cursorPos = 0;
+            if (m_cursorPos > static_cast<i32>(displayText.length())) {
+                m_cursorPos = static_cast<i32>(displayText.length());
+            }
+            
             // Вычислить позицию курсора: измерить ширину текста до позиции курсора
             std::string textBeforeCursor = displayText.substr(0, m_cursorPos);
             f32 cursorX = m_contentBounds.x;
+            
             if (!textBeforeCursor.empty()) {
                 Vector2D textSize = renderer->MeasureText(textBeforeCursor, font);
                 cursorX += textSize.x;
             }
             
-            // Нарисовать вертикальную линию (курсор)
-            f32 cursorY = m_contentBounds.y;
-            f32 cursorHeight = m_computedStyle.fontSize.value_or(18.0f);
-            // Центрировать по вертикали
-            f32 textHeight = renderer->MeasureText("A", font).y;
-            cursorY += (m_contentBounds.height - textHeight) * 0.5f;
+            // Вычислить высоту текста для центрирования
+            f32 textHeight = renderer->MeasureText("Ag", font).y;
+            f32 cursorHeight = textHeight;
+            
+            // Центрировать курсор по вертикали в contentBounds
+            f32 cursorY = m_contentBounds.y + (m_contentBounds.height - cursorHeight) * 0.5f;
             
             Color cursorColor = textColor;
             renderer->DrawLine(cursorX, cursorY, cursorX, cursorY + cursorHeight, cursorColor, 2.0f);
@@ -449,7 +481,7 @@ void CDropDown::Render(CUIRenderer* renderer) {
     std::string selectedText;
     for (const auto& opt : m_options) if (opt.id == m_selectedId) { selectedText = opt.text; break; }
     
-    FontInfo font; font.size = m_computedStyle.fontSize.value_or(18.0f);
+    FontInfo font; font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
     Color textColor = m_computedStyle.color.value_or(Color::White()); textColor.a *= opacity;
     renderer->DrawText(selectedText, m_contentBounds, textColor, font);
     

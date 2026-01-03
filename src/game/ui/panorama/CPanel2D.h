@@ -312,6 +312,7 @@ public:
     void SetFocus() override;
     bool OnKeyDown(i32 key) override;
     bool OnTextInput(const std::string& text) override;
+    bool OnMouseDown(f32 x, f32 y, i32 button) override;
     void Render(CUIRenderer* renderer) override;
     
     void Update(f32 deltaTime) override;
