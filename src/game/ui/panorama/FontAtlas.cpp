@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <Windows.h>
 
@@ -143,74 +144,281 @@ bool FontAtlas::Generate(ID3D12Device* device, ID3D12CommandQueue* commandQueue,
     m_descent = -descent * scale;
     m_lineHeight = (ascent - descent + lineGap) * scale;
     
-    // Generate atlas for ASCII characters (32-126) + some extended
-    const uint32_t firstChar = 32;
-    const uint32_t lastChar = 255;
-    const uint32_t numChars = lastChar - firstChar + 1;
+    // Generate atlas for common UI ranges.
+    // NOTE: The UI uses UTF-8 strings; limiting to 32..255 breaks Cyrillic/Unicode UI text.
+    // We pack:
+    //  - Latin-1-ish range: 32..255 (matches legacy behavior)
+    //  - Cyrillic: U+0400..U+04FF (covers Russian/UA/BY/etc basics, incl. Ё/ё)
+    const uint32_t latinFirst = 32;
+    const uint32_t latinLast = 255;
+    const uint32_t latinCount = latinLast - latinFirst + 1;
+    const uint32_t cyrFirst = 0x0400;
+    const uint32_t cyrLast = 0x04FF;
+    const uint32_t cyrCount = cyrLast - cyrFirst + 1;
+    const uint32_t totalGlyphs = latinCount + cyrCount;
     
-    // Calculate atlas size (power of 2)
+    // Calculate atlas size (power of 2).
+    // With extra Unicode ranges we need a bit more room; for larger font sizes,
+    // a 1024 atlas can be borderline and result in many zero-sized packed glyphs.
     uint32_t atlasSize = 512;
-    if (fontSize > 32) atlasSize = 1024;
-    if (fontSize > 64) atlasSize = 2048;
-    
-    m_atlasWidth = atlasSize;
-    m_atlasHeight = atlasSize;
-    
-    // Pack glyphs into atlas
-    std::vector<stbtt_packedchar> packedChars(numChars);
-    std::vector<uint8_t> atlasData(atlasSize * atlasSize);
-    
-    stbtt_pack_context packContext;
-    if (!stbtt_PackBegin(&packContext, atlasData.data(), atlasSize, atlasSize, 0, 1, nullptr)) {
-        LOG_ERROR("Failed to begin font packing");
-        return false;
-    }
-    
-    // Oversampling often produces fractional bearings that can make small glyphs look like
-    // they're "wobbling" on Y in pixel-aligned UI. Prefer stable pixel metrics.
-    stbtt_PackSetOversampling(&packContext, 1, 1);
-    
-    if (!stbtt_PackFontRange(&packContext, fontData.data(), 0, fontSize, 
-                             firstChar, numChars, packedChars.data())) {
-        LOG_ERROR("Failed to pack font range");
-        stbtt_PackEnd(&packContext);
-        return false;
-    }
-    
-    stbtt_PackEnd(&packContext);
-    
-    // Convert to SDF if requested
+    if (totalGlyphs > 256) atlasSize = 1024;
+    if (totalGlyphs >= 480) atlasSize = 2048;
+    if (fontSize >= 28.0f) atlasSize = std::max(atlasSize, 2048u);
+    if (fontSize > 64.0f) atlasSize = 4096;
+
     std::vector<uint8_t> finalAtlas;
-    if (useSDF) {
-        finalAtlas.resize(atlasSize * atlasSize);
-        GenerateSDF(atlasData, finalAtlas, atlasSize, atlasSize, 8.0f);
-    } else {
+    m_glyphs.clear();
+
+    if (!useSDF) {
+        // ===== Bitmap (coverage) atlas =====
+        m_isSDF = false;
+
+        std::vector<stbtt_packedchar> packedLatin(latinCount);
+        std::vector<stbtt_packedchar> packedCyr(cyrCount);
+        std::vector<uint8_t> atlasData(atlasSize * atlasSize);
+
+        stbtt_pack_context packContext;
+        if (!stbtt_PackBegin(&packContext, atlasData.data(), atlasSize, atlasSize, 0, 1, nullptr)) {
+            LOG_ERROR("Failed to begin font packing");
+            return false;
+        }
+
+        // Oversampling often produces fractional bearings that can make small glyphs look like
+        // they're "wobbling" on Y in pixel-aligned UI. Prefer stable pixel metrics.
+        stbtt_PackSetOversampling(&packContext, 1, 1);
+
+        stbtt_pack_range ranges[2]{};
+        ranges[0].font_size = fontSize;
+        ranges[0].first_unicode_codepoint_in_range = (int)latinFirst;
+        ranges[0].num_chars = (int)latinCount;
+        ranges[0].chardata_for_range = packedLatin.data();
+
+        ranges[1].font_size = fontSize;
+        ranges[1].first_unicode_codepoint_in_range = (int)cyrFirst;
+        ranges[1].num_chars = (int)cyrCount;
+        ranges[1].chardata_for_range = packedCyr.data();
+
+        if (!stbtt_PackFontRanges(&packContext, fontData.data(), 0, ranges, 2)) {
+            LOG_ERROR("Failed to pack font ranges (latin={}, cyrillic={})", (int)latinCount, (int)cyrCount);
+            stbtt_PackEnd(&packContext);
+            return false;
+        }
+
+        stbtt_PackEnd(&packContext);
+
+        m_atlasWidth = atlasSize;
+        m_atlasHeight = atlasSize;
         finalAtlas = std::move(atlasData);
+
+        // Create glyph map from stbtt packed ranges
+        auto addGlyphs = [&](uint32_t first, const std::vector<stbtt_packedchar>& pcs) {
+            for (uint32_t i = 0; i < (uint32_t)pcs.size(); ++i) {
+                uint32_t codepoint = first + i;
+                const auto& pc = pcs[i];
+
+                FontGlyph glyph;
+                const f32 inv = 1.0f / (f32)atlasSize;
+                const f32 inset = 0.5f * inv;
+                glyph.u0 = (pc.x0 * inv) + inset;
+                glyph.v0 = (pc.y0 * inv) + inset;
+                glyph.u1 = (pc.x1 * inv) - inset;
+                glyph.v1 = (pc.y1 * inv) - inset;
+                if (glyph.u1 < glyph.u0) glyph.u1 = glyph.u0;
+                if (glyph.v1 < glyph.v0) glyph.v1 = glyph.v0;
+                glyph.width = pc.x1 - pc.x0;
+                glyph.height = pc.y1 - pc.y0;
+                glyph.offsetX = pc.xoff;
+                glyph.offsetY = pc.yoff;
+                glyph.advance = pc.xadvance;
+                glyph.codepoint = codepoint;
+
+                m_glyphs[codepoint] = glyph;
+            }
+        };
+
+        addGlyphs(latinFirst, packedLatin);
+        addGlyphs(cyrFirst, packedCyr);
+
+    } else {
+        // ===== Fast SDF atlas (per-glyph SDF via stb_truetype) =====
+        // This avoids brute-forcing a full-image distance transform (too slow for 2048^2+).
+        m_isSDF = true;
+
+        // SDF parameters (in pixels of the base font size).
+        // Larger spread gives smoother scaling but requires more padding and atlas space.
+        const float spreadPx = 8.0f;
+        const int paddingPx = (int)std::ceil(spreadPx);
+        const unsigned char onedge = 128; // maps to 0.5 in UNORM
+        const float pixelDistScale = (spreadPx > 0.0f) ? ((float)onedge / spreadPx) : 16.0f;
+
+        struct TempGlyph {
+            uint32_t cp = 0;
+            int w = 0, h = 0;
+            int xoff = 0, yoff = 0;
+            float advance = 0.0f;
+            std::vector<uint8_t> sdf; // w*h
+            int x0 = 0, y0 = 0;       // packed location
+        };
+
+        std::vector<TempGlyph> glyphs;
+        glyphs.reserve(totalGlyphs);
+
+        auto addCodepoint = [&](uint32_t cp) {
+            int advW = 0, lsb = 0;
+            stbtt_GetCodepointHMetrics(&fontInfo, (int)cp, &advW, &lsb);
+            TempGlyph tg;
+            tg.cp = cp;
+            tg.advance = advW * scale;
+
+            // Space and control chars often have no visible shape; keep advance only.
+            if (cp == (uint32_t)' ' || cp == '\t' || cp == '\n' || cp == '\r') {
+                glyphs.push_back(std::move(tg));
+                return;
+            }
+
+            int w = 0, h = 0, xoff = 0, yoff = 0;
+            unsigned char* bmp = stbtt_GetCodepointSDF(
+                &fontInfo,
+                scale,
+                (int)cp,
+                paddingPx,
+                onedge,
+                pixelDistScale,
+                &w, &h, &xoff, &yoff
+            );
+
+            if (!bmp || w <= 0 || h <= 0) {
+                if (bmp) STBTT_free(bmp, nullptr);
+                glyphs.push_back(std::move(tg));
+                return;
+            }
+
+            tg.w = w;
+            tg.h = h;
+            tg.xoff = xoff;
+            tg.yoff = yoff;
+            tg.sdf.assign(bmp, bmp + (size_t)w * (size_t)h);
+            STBTT_free(bmp, nullptr);
+            glyphs.push_back(std::move(tg));
+        };
+
+        for (uint32_t cp = latinFirst; cp <= latinLast; ++cp) addCodepoint(cp);
+        for (uint32_t cp = cyrFirst; cp <= cyrLast; ++cp) addCodepoint(cp);
+
+        auto tryPack = [&](uint32_t size) -> bool {
+            finalAtlas.assign((size_t)size * (size_t)size, 0);
+            int x = 1, y = 1;
+            int rowH = 0;
+            const int gap = 1;
+
+            for (auto& g : glyphs) {
+                if (g.sdf.empty()) continue;
+                if (x + g.w + gap >= (int)size) {
+                    x = 1;
+                    y += rowH + gap;
+                    rowH = 0;
+                }
+                if (y + g.h + gap >= (int)size) {
+                    return false;
+                }
+
+                g.x0 = x;
+                g.y0 = y;
+
+                // Copy rows
+                for (int yy = 0; yy < g.h; ++yy) {
+                    uint8_t* dst = finalAtlas.data() + (size_t)(y + yy) * (size_t)size + (size_t)x;
+                    const uint8_t* src = g.sdf.data() + (size_t)yy * (size_t)g.w;
+                    memcpy(dst, src, (size_t)g.w);
+                }
+
+                x += g.w + gap;
+                rowH = std::max(rowH, g.h);
+            }
+            return true;
+        };
+
+        // Try requested size, then grow once if needed.
+        if (!tryPack(atlasSize)) {
+            if (atlasSize < 4096) {
+                LOG_WARN("SDF atlas pack overflow at {}x{}; retrying with 4096x4096", atlasSize, atlasSize);
+                atlasSize = 4096;
+                if (!tryPack(atlasSize)) {
+                    LOG_ERROR("Failed to pack SDF atlas even at 4096x4096");
+                    return false;
+                }
+            } else {
+                LOG_ERROR("Failed to pack SDF atlas at {}x{}", atlasSize, atlasSize);
+                return false;
+            }
+        }
+
+        m_atlasWidth = atlasSize;
+        m_atlasHeight = atlasSize;
+
+        // Build glyph map from packed temp glyphs
+        const f32 inv = 1.0f / (f32)atlasSize;
+        const f32 inset = 0.5f * inv;
+        for (const auto& tg : glyphs) {
+            FontGlyph glyph{};
+            glyph.codepoint = tg.cp;
+            glyph.advance = tg.advance;
+
+            if (!tg.sdf.empty() && tg.w > 0 && tg.h > 0) {
+                glyph.u0 = (tg.x0 * inv) + inset;
+                glyph.v0 = (tg.y0 * inv) + inset;
+                glyph.u1 = ((tg.x0 + tg.w) * inv) - inset;
+                glyph.v1 = ((tg.y0 + tg.h) * inv) - inset;
+                if (glyph.u1 < glyph.u0) glyph.u1 = glyph.u0;
+                if (glyph.v1 < glyph.v0) glyph.v1 = glyph.v0;
+
+                glyph.width = (f32)tg.w;
+                glyph.height = (f32)tg.h;
+                glyph.offsetX = (f32)tg.xoff;
+                glyph.offsetY = (f32)tg.yoff;
+            } else {
+                // No bitmap: keep advance only.
+                glyph.u0 = glyph.v0 = glyph.u1 = glyph.v1 = 0.0f;
+                glyph.width = glyph.height = 0.0f;
+                glyph.offsetX = glyph.offsetY = 0.0f;
+            }
+
+            m_glyphs[glyph.codepoint] = glyph;
+        }
+    }
+
+    // Debug stats to diagnose "invisible text" issues.
+    // If max is 0, the atlas has no ink; if avg is ~255, the atlas is likely inverted/filled.
+    {
+        uint8_t minV = 255, maxV = 0;
+        uint64_t sum = 0;
+        uint32_t nonZero = 0;
+        for (uint8_t v : finalAtlas) {
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+            sum += v;
+            if (v != 0) nonZero++;
+        }
+        const double avg = finalAtlas.empty() ? 0.0 : (double)sum / (double)finalAtlas.size();
+        const double pct = finalAtlas.empty() ? 0.0 : (100.0 * (double)nonZero / (double)finalAtlas.size());
+        LOG_INFO("Font atlas stats: min={} max={} avg={:.2f} nonZero={:.2f}%", (int)minV, (int)maxV, avg, pct);
     }
     
-    // Create glyph map
-    for (uint32_t i = 0; i < numChars; ++i) {
-        uint32_t codepoint = firstChar + i;
-        const auto& pc = packedChars[i];
-        
-        FontGlyph glyph;
-        glyph.u0 = pc.x0 / (f32)atlasSize;
-        glyph.v0 = pc.y0 / (f32)atlasSize;
-        glyph.u1 = pc.x1 / (f32)atlasSize;
-        glyph.v1 = pc.y1 / (f32)atlasSize;
-        glyph.width = pc.x1 - pc.x0;
-        glyph.height = pc.y1 - pc.y0;
-        // Keep subpixel offsets from stb_truetype.
-        // Snapping each glyph offset individually can introduce 1px vertical wobble
-        // (looks like every character has its own "top"). We instead snap the line
-        // baseline in the renderer and keep per-glyph offsets fractional.
-        glyph.offsetX = pc.xoff;
-        glyph.offsetY = pc.yoff;
-        glyph.advance = pc.xadvance;
-        glyph.codepoint = codepoint;
-        
-        m_glyphs[codepoint] = glyph;
-    }
+    // Sanity-check: if common glyphs ended up with 0 size, packing likely failed or atlas is too small.
+    auto checkGlyph = [&](uint32_t cp, const char* name) {
+        auto it = m_glyphs.find(cp);
+        if (it == m_glyphs.end()) {
+            LOG_WARN("Font atlas sanity: missing glyph '{}' (U+{:04X})", name, cp);
+            return;
+        }
+        const auto& g = it->second;
+        if (g.width <= 0 || g.height <= 0) {
+            LOG_ERROR("Font atlas sanity: glyph '{}' packed with zero size (w={}, h={}, u0={}, v0={}, u1={}, v1={})",
+                name, g.width, g.height, g.u0, g.v0, g.u1, g.v1);
+        }
+    };
+    checkGlyph((uint32_t)'A', "A");
+    checkGlyph((uint32_t)'W', "W");
     
     // Upload to GPU
     if (!GenerateAtlasTexture(device, commandQueue, commandList, finalAtlas, atlasSize, atlasSize)) {
@@ -218,8 +426,8 @@ bool FontAtlas::Generate(ID3D12Device* device, ID3D12CommandQueue* commandQueue,
         return false;
     }
     
-    LOG_INFO("Font atlas generated: {} glyphs, {}x{}, SDF={}", 
-             numChars, atlasSize, atlasSize, useSDF);
+    LOG_INFO("Font atlas generated: {} glyphs (latin={}, cyrillic={}), {}x{}, SDF={}",
+             totalGlyphs, latinCount, cyrCount, atlasSize, atlasSize, useSDF);
     
     return true;
 }
@@ -411,19 +619,51 @@ Vector2D FontAtlas::MeasureString(const std::string& text) const {
     f32 maxWidth = 0.0f;
     f32 lineWidth = 0.0f;
     f32 height = m_lineHeight;
-    
-    for (char c : text) {
-        if (c == '\r') continue;
-        if (c == '\n') {
+
+    auto nextCodepoint = [](const std::string& s, size_t& i) -> uint32_t {
+        const size_t n = s.size();
+        if (i >= n) return 0;
+        const uint8_t c0 = static_cast<uint8_t>(s[i]);
+        if (c0 < 0x80) { i += 1; return c0; }
+        if ((c0 & 0xE0) == 0xC0 && i + 1 < n) {
+            const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+            if ((c1 & 0xC0) == 0x80) { i += 2; return ((c0 & 0x1F) << 6) | (c1 & 0x3F); }
+        }
+        if ((c0 & 0xF0) == 0xE0 && i + 2 < n) {
+            const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+            const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+            if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80)) {
+                i += 3;
+                return ((c0 & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F);
+            }
+        }
+        if ((c0 & 0xF8) == 0xF0 && i + 3 < n) {
+            const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+            const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+            const uint8_t c3 = static_cast<uint8_t>(s[i + 3]);
+            if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80) && ((c3 & 0xC0) == 0x80)) {
+                i += 4;
+                return ((c0 & 0x07) << 18) | ((c1 & 0x3F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+            }
+        }
+        i += 1;
+        return 0xFFFD;
+    };
+
+    size_t i = 0;
+    while (i < text.size()) {
+        const uint32_t cp = nextCodepoint(text, i);
+        if (cp == '\r') continue;
+        if (cp == '\n') {
             maxWidth = std::max(maxWidth, lineWidth);
             lineWidth = 0.0f;
             height += m_lineHeight;
             continue;
         }
-        const uint32_t codepoint = static_cast<uint32_t>(static_cast<unsigned char>(c));
-        const FontGlyph* glyph = GetGlyph(codepoint);
+
+        const FontGlyph* glyph = GetGlyph(cp);
         if (glyph) {
-            if (c == '\t') lineWidth += glyph->advance * 4.0f;
+            if (cp == '\t') lineWidth += glyph->advance * 4.0f;
             else lineWidth += glyph->advance;
         }
     }
@@ -523,7 +763,7 @@ FontAtlas* FontManager::GetFont(const std::string& fontName, f32 fontSize) {
     // Create new font atlas
     auto atlas = std::make_unique<FontAtlas>();
     if (!atlas->GenerateFromSystemFont(m_device, m_commandQueue, m_commandList, 
-                                       fontName, fontSize, false)) {
+                                       fontName, fontSize, true)) {
         LOG_ERROR("Failed to generate font atlas for {} {}", fontName, fontSize);
         return nullptr;
     }

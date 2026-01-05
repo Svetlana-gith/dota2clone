@@ -63,7 +63,8 @@ struct RenderCommand {
 struct FontInfo {
     // Default Panorama font (project-provided).
     std::string family = "Roboto Condensed";
-    f32 size = 24.0f;  // Increased from 18.0f for better readability
+    // Default font size in pixels (should match CStyleManager default).
+    f32 size = 16.0f;
     bool bold = false;
     bool italic = false;
     // Extra spacing between glyphs (pixels). Applied between characters on the same line.
@@ -196,6 +197,11 @@ private:
     std::vector<UIVertex> m_vertices;
     std::vector<UIVertex> m_textVertices; // Separate batch for text
     std::vector<uint16_t> m_indices;
+
+    // Text upload cursor (in vertices) within the per-frame dynamic vertex buffer.
+    // We use the second half of the buffer for text. Multiple text flushes can occur per frame
+    // (e.g. different font sizes); this cursor prevents overwriting earlier batches before GPU executes.
+    size_t m_textUploadCursorVertices = 0;
     
     // Texture cache
     std::unordered_map<std::string, void*> m_textureCache;
@@ -235,6 +241,8 @@ private:
     
     // Font atlas for text rendering (Dota 2 style)
     class FontAtlas* m_currentFont = nullptr;
+    std::string m_currentFontFamily;
+    f32 m_currentFontSize = 0.0f;
     
     // Text rendering helpers
     bool InitializeDirectWrite();

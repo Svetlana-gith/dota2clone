@@ -99,11 +99,10 @@ std::shared_ptr<CPanel2D> CLayoutFile::CreatePanelFromNode(const XMLNode* node) 
         }
     }
     
-    // Set text content for labels
-    if (!node->textContent.empty()) {
-        if (auto* label = dynamic_cast<CLabel*>(panel.get())) {
-            label->SetText(node->textContent);
-        }
+    // IMPORTANT: do NOT apply text during element creation.
+    // Store text content as an attribute so CUITextSystem can apply it later.
+    if (!node->textContent.empty() && !panel->HasAttribute("text")) {
+        panel->SetAttribute("text", node->textContent);
     }
     
     return panel;
@@ -125,12 +124,6 @@ void CLayoutFile::ApplyAttributes(CPanel2D* panel, const std::unordered_map<std:
             std::string className;
             while (iss >> className) {
                 panel->AddClass(className);
-            }
-        } else if (name == "text") {
-            if (auto* label = dynamic_cast<CLabel*>(panel)) {
-                label->SetText(value);
-            } else if (auto* button = dynamic_cast<CButton*>(panel)) {
-                button->SetText(value);
             }
         } else if (name == "src") {
             if (auto* image = dynamic_cast<CImage*>(panel)) {

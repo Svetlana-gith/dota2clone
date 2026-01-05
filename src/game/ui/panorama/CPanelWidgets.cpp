@@ -33,6 +33,8 @@ void CLabel::SetLocString(const std::string& token) {
 }
 
 void CLabel::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;  // Check visibility before rendering
+    
     CPanel2D::Render(renderer);
     if (m_text.empty() || !renderer) return;
     
@@ -40,7 +42,7 @@ void CLabel::Render(CUIRenderer* renderer) {
     if (opacity <= 0) return;
     
     FontInfo font;
-    font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
+    font.size = m_computedStyle.fontSize.value_or(16.0f);
     font.bold = m_computedStyle.fontWeight.has_value() && m_computedStyle.fontWeight.value() == "bold";
     font.family = m_computedStyle.fontFamily.value_or(font.family);
     // Letter spacing is interpreted as PIXELS (CSS-like `letter-spacing`).
@@ -69,6 +71,7 @@ CImage::CImage(const std::string& src, const std::string& id)
 void CImage::SetImage(const std::string& path) { m_imagePath = path; }
 
 void CImage::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
     CPanel2D::Render(renderer);
     if (m_imagePath.empty() || !renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
@@ -131,6 +134,8 @@ bool CButton::OnMouseUp(f32 x, f32 y, i32 button) {
 }
 
 void CButton::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
+    
     // Save original background color
     auto originalBg = m_computedStyle.backgroundColor;
     
@@ -187,6 +192,7 @@ void CProgressBar::SetValue(f32 value) {
 }
 
 void CProgressBar::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
     CPanel2D::Render(renderer);
     if (!renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
@@ -302,13 +308,14 @@ void CTextEntry::Update(f32 deltaTime) {
 }
 
 void CTextEntry::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
     CPanel2D::Render(renderer);
     if (!renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
     
     // Настроить шрифт из стиля
     FontInfo font;
-    font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
+    font.size = m_computedStyle.fontSize.value_or(16.0f);
     font.family = m_computedStyle.fontFamily.value_or("Roboto Condensed");
     font.bold = m_computedStyle.fontWeight.has_value() && m_computedStyle.fontWeight.value() == "bold";
     
@@ -409,6 +416,7 @@ bool CSlider::OnMouseUp(f32 x, f32 y, i32 button) {
 }
 
 void CSlider::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
     CPanel2D::Render(renderer);
     if (!renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
@@ -474,6 +482,7 @@ bool CDropDown::OnMouseUp(f32 x, f32 y, i32 button) {
 }
 
 void CDropDown::Render(CUIRenderer* renderer) {
+    if (!m_visible) return;
     CPanel2D::Render(renderer);
     if (!renderer) return;
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
@@ -481,7 +490,7 @@ void CDropDown::Render(CUIRenderer* renderer) {
     std::string selectedText;
     for (const auto& opt : m_options) if (opt.id == m_selectedId) { selectedText = opt.text; break; }
     
-    FontInfo font; font.size = m_computedStyle.fontSize.value_or(24.0f);  // Increased from 18.0f for better readability
+    FontInfo font; font.size = m_computedStyle.fontSize.value_or(16.0f);
     Color textColor = m_computedStyle.color.value_or(Color::White()); textColor.a *= opacity;
     renderer->DrawText(selectedText, m_contentBounds, textColor, font);
     

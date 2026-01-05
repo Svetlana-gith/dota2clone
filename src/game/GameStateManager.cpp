@@ -3,6 +3,7 @@
 #include "ui/panorama/CUIEngine.h"
 #include "ui/panorama/CPanel2D.h"
 #include "auth/AuthClient.h"
+#include "network/NetworkClient.h"
 #include <algorithm>
 
 namespace Game {
@@ -34,6 +35,10 @@ void GameStateManager::Initialize() {
     m_heroesState->m_manager = this;
     LOG_INFO("HeroesState created");
     
+    m_heroPickState = std::make_unique<HeroPickState>();
+    m_heroPickState->m_manager = this;
+    LOG_INFO("HeroPickState created");
+    
     m_loadingState = std::make_unique<LoadingState>();
     m_loadingState->m_manager = this;
     LOG_INFO("LoadingState created");
@@ -59,6 +64,7 @@ void GameStateManager::Shutdown() {
     m_loginState.reset();
     m_mainMenuState.reset();
     m_heroesState.reset();
+    m_heroPickState.reset();
     m_loadingState.reset();
     m_inGameState.reset();
 }
@@ -79,6 +85,11 @@ std::unique_ptr<IGameState> GameStateManager::CreateState(EGameState type) {
         }
         case EGameState::Heroes: {
             auto state = std::make_unique<HeroesState>();
+            state->m_manager = this;
+            return state;
+        }
+        case EGameState::HeroPick: {
+            auto state = std::make_unique<HeroPickState>();
             state->m_manager = this;
             return state;
         }
@@ -114,6 +125,9 @@ void GameStateManager::ChangeState(EGameState newState) {
             break;
         case EGameState::Heroes:
             state = m_heroesState.get();
+            break;
+        case EGameState::HeroPick:
+            state = m_heroPickState.get();
             break;
         case EGameState::Loading:
             state = m_loadingState.get();
@@ -159,6 +173,7 @@ void GameStateManager::PushState(EGameState state) {
         case EGameState::Login: newState = m_loginState.get(); break;
         case EGameState::MainMenu: newState = m_mainMenuState.get(); break;
         case EGameState::Heroes: newState = m_heroesState.get(); break;
+        case EGameState::HeroPick: newState = m_heroPickState.get(); break;
         case EGameState::Loading: newState = m_loadingState.get(); break;
         case EGameState::InGame: newState = m_inGameState.get(); break;
         default: return;
@@ -294,12 +309,66 @@ HeroesState* GameStateManager::GetHeroesState() {
     return m_heroesState.get();
 }
 
+HeroPickState* GameStateManager::GetHeroPickState() {
+    return m_heroPickState.get();
+}
+
 LoadingState* GameStateManager::GetLoadingState() {
     return m_loadingState.get();
 }
 
 InGameState* GameStateManager::GetInGameState() {
     return m_inGameState.get();
+}
+
+// ============ Network Client Management ============
+
+bool GameStateManager::ConnectToGameServer(const std::string& ip, u16 port, const std::string& username) {
+    LOG_INFO("GameStateManager::ConnectToGameServer({}:{}, {})", ip, port, username);
+    
+    // Create NetworkClient if not exists
+    if (!m_networkClient) {
+        m_networkClient = std::make_unique<WorldEditor::Network::NetworkClient>();
+    }
+    
+    // Disconnect if already connected to different server
+    if (m_networkClient->isConnected()) {
+        LOG_INFO("Already connected, disconnecting first...");
+        m_networkClient->disconnect();
+    }
+    
+    // Store server info
+    m_gameServerIp = ip;
+    m_gameServerPort = port;
+    
+    // Set username before connecting
+    m_networkClient->setUsername(username);
+    
+    // Set accountId from AuthClient for reconnect support
+    if (m_authClient && m_authClient->IsAuthenticated()) {
+        m_networkClient->setAccountId(m_authClient->GetAccountId());
+        LOG_INFO("Set accountId {} for network connection", m_authClient->GetAccountId());
+    }
+    
+    // Connect
+    if (m_networkClient->connect(ip.c_str(), port)) {
+        LOG_INFO("Connection initiated to {}:{}", ip, port);
+        return true;
+    }
+    
+    LOG_ERROR("Failed to connect to {}:{}", ip, port);
+    return false;
+}
+
+void GameStateManager::DisconnectFromGameServer() {
+    if (m_networkClient && m_networkClient->isConnected()) {
+        LOG_INFO("Disconnecting from game server");
+        m_networkClient->disconnect();
+    }
+}
+
+bool GameStateManager::IsConnectedToGameServer() const {
+    return m_networkClient && m_networkClient->isConnected();
 }
 
 } // namespace Game

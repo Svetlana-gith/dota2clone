@@ -64,6 +64,7 @@ struct Lobby {
     MatchMode mode = MatchMode::AllPick;
     std::string region = "auto";
     std::vector<u64> players;
+    std::unordered_map<u64, u64> playerToAccount;  // playerId -> accountId mapping
     std::unordered_map<u64, bool> accepted;
     f32 acceptTimeoutSeconds = 20.0f;
     f32 timeSinceFound = 0.0f;
@@ -79,6 +80,20 @@ struct ServerEntry {
     f32 timeSinceHeartbeat = 0.0f;
     bool reserved = false;
     NetworkAddress controlAddr; // address we received ServerRegister from
+};
+
+// Active game info for reconnect support
+struct ActiveGameEntry {
+    u64 lobbyId = 0;
+    u64 accountId = 0;
+    u64 serverId = 0;
+    std::string serverIp;
+    u16 serverPort = 0;
+    u8 teamSlot = 0;
+    std::string heroName;
+    f32 gameStartTime = 0.0f;
+    f32 disconnectTime = 0.0f;  // 0 = still connected
+    bool isDisconnected = false;
 };
 
 class CoordinatorApp {
@@ -180,6 +195,8 @@ private:
     }
 
     void tick(f32 dt) {
+        totalUptime_ += dt;  // Track uptime for disconnect times
+        
         // Server pool TTL.
         for (auto it = servers_.begin(); it != servers_.end();) {
             it->second.timeSinceHeartbeat += dt;
@@ -249,6 +266,7 @@ private:
 
         for (u16 i = 0; i < requiredPlayers_; ++i) {
             lobby.players.push_back(queue_[i].playerId);
+            lobby.playerToAccount[queue_[i].playerId] = queue_[i].accountId;  // Store accountId mapping
             lobby.accepted[queue_[i].playerId] = false;
         }
         queue_.erase(queue_.begin(), queue_.begin() + requiredPlayers_);
@@ -262,6 +280,12 @@ private:
         p.requiredPlayers = requiredPlayers_;
         p.acceptTimeoutSeconds = static_cast<u16>(lobby.acceptTimeoutSeconds);
         for (u64 pid : lobby.players) {
+            auto it = players_.find(pid);
+            if (it == players_.end()) {
+                LOG_ERROR("Cannot send MatchFound to player {} - address not found!", pid);
+            } else {
+                LOG_INFO("Sending MatchFound to player {} at {}", pid, it->second.toString());
+            }
             sendToPlayer(pid, MatchmakingMessageType::MatchFound, pid, lobby.lobbyId, &p, sizeof(p));
         }
 
@@ -294,6 +318,23 @@ private:
                 break;
             case MatchmakingMessageType::ServerHeartbeat:
                 onServerHeartbeat(payload, payloadSize);
+                break;
+                
+            // Reconnect support
+            case MatchmakingMessageType::CheckActiveGame:
+                onCheckActiveGame(playerId, payload, payloadSize, from);
+                break;
+            case MatchmakingMessageType::ReconnectRequest:
+                onReconnectRequest(playerId, payload, payloadSize, from);
+                break;
+            case MatchmakingMessageType::PlayerDisconnected:
+                onPlayerDisconnected(payload, payloadSize);
+                break;
+            case MatchmakingMessageType::PlayerReconnected:
+                onPlayerReconnected(payload, payloadSize);
+                break;
+            case MatchmakingMessageType::GameEnded:
+                onGameEnded(payload, payloadSize);
                 break;
 
             default:
@@ -503,7 +544,29 @@ private:
         CopyCString(rp.serverIp, sizeof(rp.serverIp), s.ip);
         rp.serverPort = s.gamePort;
 
+        // Create active game entries for all players (for reconnect support)
+        u8 teamSlot = 0;
         for (u64 pid : l.players) {
+            // Get real accountId from lobby mapping
+            u64 accountId = pid;  // Fallback to playerId
+            auto accIt = l.playerToAccount.find(pid);
+            if (accIt != l.playerToAccount.end()) {
+                accountId = accIt->second;
+            }
+            
+            ActiveGameEntry game;
+            game.lobbyId = l.lobbyId;
+            game.accountId = accountId;
+            game.serverId = s.serverId;
+            game.serverIp = s.ip;
+            game.serverPort = s.gamePort;
+            game.teamSlot = teamSlot++;
+            game.gameStartTime = totalUptime_;
+            game.isDisconnected = false;
+            
+            activeGames_[accountId] = game;
+            LOG_INFO("  Active game created for account {} (playerId={}, slot {})", accountId, pid, game.teamSlot);
+            
             sendToPlayer(pid, MatchmakingMessageType::MatchReady, pid, l.lobbyId, &rp, sizeof(rp));
         }
     }
@@ -568,6 +631,145 @@ private:
         if (s.reserved && s.currentPlayers == 0) {
             // allow reuse after match ends (simple heuristic)
             s.reserved = false;
+        }
+    }
+    
+    // ============ Reconnect Support ============
+    
+    void onCheckActiveGame(u64 playerId, const void* payload, u32 payloadSize, const NetworkAddress& from) {
+        if (!payload || payloadSize < sizeof(CheckActiveGamePayload)) return;
+        const auto* p = static_cast<const CheckActiveGamePayload*>(payload);
+        
+        players_[playerId] = from;  // Remember address for response
+        
+        u64 accountId = p->accountId;
+        LOG_INFO("CheckActiveGame request from player {} (accountId={})", playerId, accountId);
+        
+        // Look for active game for this account
+        auto it = activeGames_.find(accountId);
+        if (it != activeGames_.end() && it->second.isDisconnected) {
+            const ActiveGameEntry& game = it->second;
+            
+            // Send active game info
+            ActiveGameInfoPayload resp{};
+            resp.lobbyId = game.lobbyId;
+            resp.accountId = game.accountId;
+            CopyCString(resp.serverIp, sizeof(resp.serverIp), game.serverIp);
+            resp.serverPort = game.serverPort;
+            resp.teamSlot = game.teamSlot;
+            CopyCString(resp.heroName, sizeof(resp.heroName), game.heroName);
+            resp.gameTime = totalUptime_ - game.gameStartTime;
+            resp.disconnectTime = totalUptime_ - game.disconnectTime;
+            resp.canReconnect = 1;
+            
+            LOG_INFO("Found active game for account {}: lobby={}, server={}:{}", 
+                     accountId, game.lobbyId, game.serverIp, game.serverPort);
+            
+            sendToPlayer(playerId, MatchmakingMessageType::ActiveGameInfo, playerId, game.lobbyId, &resp, sizeof(resp));
+        } else {
+            // No active game
+            LOG_INFO("No active game for account {}", accountId);
+            sendToPlayer(playerId, MatchmakingMessageType::NoActiveGame, playerId, 0, nullptr, 0);
+        }
+    }
+    
+    void onReconnectRequest(u64 playerId, const void* payload, u32 payloadSize, const NetworkAddress& from) {
+        if (!payload || payloadSize < sizeof(ReconnectRequestPayload)) return;
+        const auto* p = static_cast<const ReconnectRequestPayload*>(payload);
+        
+        players_[playerId] = from;
+        
+        u64 accountId = p->accountId;
+        u64 lobbyId = p->lobbyId;
+        
+        LOG_INFO("Reconnect request from player {} (accountId={}, lobbyId={})", playerId, accountId, lobbyId);
+        
+        auto it = activeGames_.find(accountId);
+        if (it == activeGames_.end() || it->second.lobbyId != lobbyId) {
+            LOG_WARN("Reconnect denied - no matching active game");
+            // Send rejection (use MatchCancelled with reason)
+            MatchCancelledPayload resp{};
+            CopyCString(resp.reason, sizeof(resp.reason), "Game no longer exists");
+            resp.shouldRequeue = 0;
+            sendToPlayer(playerId, MatchmakingMessageType::MatchCancelled, playerId, lobbyId, &resp, sizeof(resp));
+            return;
+        }
+        
+        const ActiveGameEntry& game = it->second;
+        
+        // Send reconnect approval with server info
+        ActiveGameInfoPayload resp{};
+        resp.lobbyId = game.lobbyId;
+        resp.accountId = accountId;
+        CopyCString(resp.serverIp, sizeof(resp.serverIp), game.serverIp);
+        resp.serverPort = game.serverPort;
+        resp.teamSlot = game.teamSlot;
+        CopyCString(resp.heroName, sizeof(resp.heroName), game.heroName);
+        resp.gameTime = totalUptime_ - game.gameStartTime;
+        resp.disconnectTime = 0;
+        resp.canReconnect = 1;
+        
+        LOG_INFO("Reconnect approved for account {} -> {}:{}", accountId, game.serverIp, game.serverPort);
+        sendToPlayer(playerId, MatchmakingMessageType::ReconnectApproved, playerId, lobbyId, &resp, sizeof(resp));
+    }
+    
+    void onPlayerDisconnected(const void* payload, u32 payloadSize) {
+        if (!payload || payloadSize < sizeof(PlayerDisconnectedPayload)) return;
+        const auto* p = static_cast<const PlayerDisconnectedPayload*>(payload);
+        
+        u64 accountId = p->accountId;
+        std::string heroName = ReadFixedString(p->heroName, sizeof(p->heroName));
+        
+        LOG_INFO("Player disconnected: accountId={}, hero={}, lobbyId={}", accountId, heroName, p->lobbyId);
+        
+        // Update or create active game entry
+        ActiveGameEntry& game = activeGames_[accountId];
+        game.lobbyId = p->lobbyId;
+        game.accountId = accountId;
+        game.serverId = p->serverId;
+        game.teamSlot = p->teamSlot;
+        game.heroName = heroName;
+        game.disconnectTime = totalUptime_;
+        game.isDisconnected = true;
+        
+        // Get server info
+        auto serverIt = servers_.find(p->serverId);
+        if (serverIt != servers_.end()) {
+            game.serverIp = serverIt->second.ip;
+            game.serverPort = serverIt->second.gamePort;
+        }
+    }
+    
+    void onPlayerReconnected(const void* payload, u32 payloadSize) {
+        if (!payload || payloadSize < sizeof(PlayerReconnectedPayload)) return;
+        const auto* p = static_cast<const PlayerReconnectedPayload*>(payload);
+        
+        u64 accountId = p->accountId;
+        LOG_INFO("Player reconnected: accountId={}, lobbyId={}", accountId, p->lobbyId);
+        
+        // Mark as no longer disconnected
+        auto it = activeGames_.find(accountId);
+        if (it != activeGames_.end()) {
+            it->second.isDisconnected = false;
+            it->second.disconnectTime = 0.0f;
+        }
+    }
+    
+    void onGameEnded(const void* payload, u32 payloadSize) {
+        if (!payload || payloadSize < sizeof(GameEndedPayload)) return;
+        const auto* p = static_cast<const GameEndedPayload*>(payload);
+        
+        LOG_INFO("Game ended: lobbyId={}, winner={}, duration={:.1f}s", 
+                 p->lobbyId, p->winningTeam, p->gameDuration);
+        
+        // Remove all active games for this lobby
+        for (auto it = activeGames_.begin(); it != activeGames_.end();) {
+            if (it->second.lobbyId == p->lobbyId) {
+                LOG_INFO("  Removing active game for account {}", it->first);
+                it = activeGames_.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
     
@@ -697,6 +899,10 @@ private:
     std::unordered_map<u64, Lobby> lobbies_;
     std::unordered_map<u64, ServerEntry> servers_;
     std::unordered_map<u64, PendingAuthValidation> pendingValidations_;
+    
+    // Active games (accountId -> game info) for reconnect support
+    std::unordered_map<u64, ActiveGameEntry> activeGames_;
+    f32 totalUptime_ = 0.0f;  // For tracking disconnect times
 };
 
 } // namespace

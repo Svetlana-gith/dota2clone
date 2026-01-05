@@ -221,6 +221,21 @@ void CPanel2D::ApplyStyles(const CStyleSheet* stylesheet) {
         m_computedStyle = stylesheet->ComputeStyle(this);
     }
     m_computedStyle.Merge(m_inlineStyle);
+
+    // Keep inheritance consistent with ComputeStyle() path.
+    if (m_parent) {
+        const StyleProperties& ps = m_parent->m_computedStyle;
+        if (!m_computedStyle.color.has_value() && ps.color.has_value()) m_computedStyle.color = ps.color;
+        if (!m_computedStyle.fontSize.has_value() && ps.fontSize.has_value()) m_computedStyle.fontSize = ps.fontSize;
+        if (!m_computedStyle.fontFamily.has_value() && ps.fontFamily.has_value()) m_computedStyle.fontFamily = ps.fontFamily;
+        if (!m_computedStyle.fontWeight.has_value() && ps.fontWeight.has_value()) m_computedStyle.fontWeight = ps.fontWeight;
+        if (!m_computedStyle.fontStyle.has_value() && ps.fontStyle.has_value()) m_computedStyle.fontStyle = ps.fontStyle;
+        if (!m_computedStyle.textAlign.has_value() && ps.textAlign.has_value()) m_computedStyle.textAlign = ps.textAlign;
+        if (!m_computedStyle.verticalTextAlign.has_value() && ps.verticalTextAlign.has_value()) m_computedStyle.verticalTextAlign = ps.verticalTextAlign;
+        if (!m_computedStyle.letterSpacing.has_value() && ps.letterSpacing.has_value()) m_computedStyle.letterSpacing = ps.letterSpacing;
+        if (!m_computedStyle.lineHeight.has_value() && ps.lineHeight.has_value()) m_computedStyle.lineHeight = ps.lineHeight;
+    }
+
     m_styleInvalid = false;
 }
 
@@ -235,6 +250,25 @@ void CPanel2D::ComputeStyle() {
     // Apply styles from global stylesheet
     m_computedStyle = CStyleManager::Instance().ComputeStyle(this);
     m_computedStyle.Merge(m_inlineStyle);
+
+    // Basic CSS-like inheritance for common text properties.
+    // Panorama panels are separate nodes; without this, setting font/color on a parent
+    // (e.g. a Button) does not affect a child Label, leading to wrong sizing.
+    if (m_parent) {
+        const StyleProperties& ps = m_parent->m_computedStyle;
+
+        // Inheritable text props (only inherit if not explicitly set on this panel).
+        if (!m_computedStyle.color.has_value() && ps.color.has_value()) m_computedStyle.color = ps.color;
+        if (!m_computedStyle.fontSize.has_value() && ps.fontSize.has_value()) m_computedStyle.fontSize = ps.fontSize;
+        if (!m_computedStyle.fontFamily.has_value() && ps.fontFamily.has_value()) m_computedStyle.fontFamily = ps.fontFamily;
+        if (!m_computedStyle.fontWeight.has_value() && ps.fontWeight.has_value()) m_computedStyle.fontWeight = ps.fontWeight;
+        if (!m_computedStyle.fontStyle.has_value() && ps.fontStyle.has_value()) m_computedStyle.fontStyle = ps.fontStyle;
+        if (!m_computedStyle.textAlign.has_value() && ps.textAlign.has_value()) m_computedStyle.textAlign = ps.textAlign;
+        if (!m_computedStyle.verticalTextAlign.has_value() && ps.verticalTextAlign.has_value()) m_computedStyle.verticalTextAlign = ps.verticalTextAlign;
+        if (!m_computedStyle.letterSpacing.has_value() && ps.letterSpacing.has_value()) m_computedStyle.letterSpacing = ps.letterSpacing;
+        if (!m_computedStyle.lineHeight.has_value() && ps.lineHeight.has_value()) m_computedStyle.lineHeight = ps.lineHeight;
+    }
+
     m_styleInvalid = false;
 }
 

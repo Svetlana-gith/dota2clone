@@ -23,6 +23,9 @@ using OnMatchReadyCallback = std::function<void(const std::string& serverIP, u16
 using OnMatchCancelledCallback = std::function<void(const std::string& reason, bool shouldRequeue)>;
 using OnQueueRejectedCallback = std::function<void(const std::string& reason, bool authFailed, bool isBanned)>;
 using OnErrorCallback = std::function<void(const std::string& error)>;
+using OnActiveGameFoundCallback = std::function<void(const ActiveGameInfo& gameInfo)>;
+using OnNoActiveGameCallback = std::function<void()>;
+using OnReconnectApprovedCallback = std::function<void(const std::string& serverIP, u16 port, u8 teamSlot, const std::string& heroName)>;
 
 // ============ Matchmaking Client ============
 
@@ -45,6 +48,12 @@ public:
     void acceptMatch();
     void declineMatch();
     
+    // Reconnect
+    void checkForActiveGame(u64 accountId);
+    void requestReconnect(u64 lobbyId);
+    bool hasActiveGame() const { return hasActiveGame_; }
+    const ActiveGameInfo& getActiveGameInfo() const { return activeGameInfo_; }
+    
     // Update (call every frame)
     void update(f32 deltaTime);
     
@@ -57,6 +66,9 @@ public:
     void setOnMatchCancelled(OnMatchCancelledCallback callback) { onMatchCancelled_ = callback; }
     void setOnQueueRejected(OnQueueRejectedCallback callback) { onQueueRejected_ = callback; }
     void setOnError(OnErrorCallback callback) { onError_ = callback; }
+    void setOnActiveGameFound(OnActiveGameFoundCallback callback) { onActiveGameFound_ = callback; }
+    void setOnNoActiveGame(OnNoActiveGameCallback callback) { onNoActiveGame_ = callback; }
+    void setOnReconnectApproved(OnReconnectApprovedCallback callback) { onReconnectApproved_ = callback; }
     
     // Status
     const QueueStatus& getQueueStatus() const { return queueStatus_; }
@@ -105,12 +117,19 @@ private:
     OnMatchCancelledCallback onMatchCancelled_;
     OnQueueRejectedCallback onQueueRejected_;
     OnErrorCallback onError_;
+    OnActiveGameFoundCallback onActiveGameFound_;
+    OnNoActiveGameCallback onNoActiveGame_;
+    OnReconnectApprovedCallback onReconnectApproved_;
 
     // Accept status state (Dota-like accept phase)
     std::vector<u64> acceptPlayerIds_;
     std::vector<bool> acceptStates_;
     u16 acceptTimeoutSeconds_ = 0;
     f32 acceptElapsedSeconds_ = 0.0f;
+    
+    // Reconnect state
+    bool hasActiveGame_ = false;
+    ActiveGameInfo activeGameInfo_;
 };
 
 } // namespace Matchmaking

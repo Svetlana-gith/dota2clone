@@ -74,6 +74,8 @@ enum class MatchmakingMessageType : u8 {
     QueueCancel,            // Player cancels search
     MatchAccept,            // Player accepts found match
     MatchDecline,           // Player declines found match
+    CheckActiveGame,        // Check if player has an active game to reconnect
+    ReconnectRequest,       // Player wants to reconnect to active game
     
     // Matchmaking Server -> Client
     QueueConfirm,           // Queue request accepted
@@ -83,6 +85,9 @@ enum class MatchmakingMessageType : u8 {
     MatchReady,             // All players accepted, here's the server
     MatchCancelled,         // Match cancelled (someone declined)
     QueueRejected,          // Queue request rejected (auth failed, banned, etc.)
+    ActiveGameInfo,         // Response to CheckActiveGame - has active game info
+    NoActiveGame,           // Response to CheckActiveGame - no active game
+    ReconnectApproved,      // Reconnect approved, here's the server info
     
     // Status
     Heartbeat,
@@ -91,9 +96,13 @@ enum class MatchmakingMessageType : u8 {
     // DedicatedServer -> Coordinator (server pool)
     ServerRegister = 100,
     ServerHeartbeat = 101,
+    PlayerDisconnected = 103,  // Notify coordinator that player disconnected
+    PlayerReconnected = 104,   // Notify coordinator that player reconnected
+    GameEnded = 105,           // Game finished, clear active game records
 
     // Coordinator -> DedicatedServer
-    AssignLobby = 102
+    AssignLobby = 102,
+    ReconnectPlayer = 106      // Tell server to expect reconnecting player
 };
 
 struct MatchmakingMessage {
@@ -112,6 +121,32 @@ struct QueueStatus {
     u32 playersInQueue = 0;
     f32 estimatedWaitTime = 0;
     std::string region;
+};
+
+// ============ Active Game Info (for reconnect) ============
+
+struct ActiveGameInfo {
+    u64 lobbyId = 0;
+    u64 accountId = 0;
+    std::string serverIP;
+    u16 serverPort = 0;
+    u8 teamSlot = 0;           // Player's team slot (0-4 Radiant, 5-9 Dire)
+    std::string heroName;       // Hero they were playing
+    f32 gameTime = 0;           // How long the game has been running
+    f32 disconnectTime = 0;     // How long they've been disconnected
+    bool canReconnect = true;   // False if abandon timer expired
+};
+
+// ============ Disconnected Player Info ============
+
+struct DisconnectedPlayer {
+    u64 accountId = 0;
+    u64 lobbyId = 0;
+    u8 teamSlot = 0;
+    std::string heroName;
+    f32 disconnectTimestamp = 0;
+    f32 abandonTimeout = 300.0f;  // 5 minutes to reconnect before abandon
+    bool hasAbandoned = false;
 };
 
 } // namespace Matchmaking

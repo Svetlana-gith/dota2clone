@@ -13,6 +13,7 @@ add_library(world_editor_game STATIC
     states/LoginState.cpp
     states/MainMenuState.cpp
     states/HeroesState.cpp
+    states/HeroPickState.cpp
     states/LoadingState.cpp
     states/InGameState.cpp
 )
@@ -30,6 +31,8 @@ target_link_libraries(world_editor_game
     world_editor_server
     world_editor_network
     world_editor_auth
+    world_editor_serialization
+    world_editor_ui
     panorama_ui
 )
 

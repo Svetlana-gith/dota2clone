@@ -127,6 +127,55 @@ struct QueueRejectedPayload {
     u8 isBanned = 0;        // 1 = account is banned
     u8 _reserved[6]{};
 };
+
+// ---- Reconnect Payloads ----
+
+struct CheckActiveGamePayload {
+    u64 accountId = 0;
+    char sessionToken[kSessionTokenMax]{};
+};
+
+struct ActiveGameInfoPayload {
+    u64 lobbyId = 0;
+    u64 accountId = 0;
+    char serverIp[kIpStringMax]{};
+    u16 serverPort = 0;
+    u8 teamSlot = 0;
+    char heroName[32]{};
+    f32 gameTime = 0;
+    f32 disconnectTime = 0;
+    u8 canReconnect = 1;
+    u8 _reserved[3]{};
+};
+
+struct ReconnectRequestPayload {
+    u64 accountId = 0;
+    u64 lobbyId = 0;
+    char sessionToken[kSessionTokenMax]{};
+};
+
+struct PlayerDisconnectedPayload {
+    u64 serverId = 0;
+    u64 lobbyId = 0;
+    u64 accountId = 0;
+    u8 teamSlot = 0;
+    char heroName[32]{};
+    u8 _reserved[3]{};
+};
+
+struct PlayerReconnectedPayload {
+    u64 serverId = 0;
+    u64 lobbyId = 0;
+    u64 accountId = 0;
+};
+
+struct GameEndedPayload {
+    u64 serverId = 0;
+    u64 lobbyId = 0;
+    u8 winningTeam = 0;  // 0 = Radiant, 1 = Dire, 2 = Draw
+    f32 gameDuration = 0;
+    u8 _reserved[3]{};
+};
 #pragma pack(pop)
 
 // ---- Helpers ----

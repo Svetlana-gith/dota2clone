@@ -192,6 +192,7 @@ void MatchmakingClient::sendPacket(MatchmakingMessageType type, u64 lobbyId, con
 }
 
 void MatchmakingClient::handlePacket(MatchmakingMessageType type, u64 lobbyId, const void* payload, u32 payloadSize) {
+    LOG_INFO("Received packet type={} lobbyId={} payloadSize={}", static_cast<int>(type), lobbyId, payloadSize);
     switch (type) {
         case MatchmakingMessageType::QueueConfirm:
             LOG_INFO("Queue confirmed");
@@ -212,7 +213,7 @@ void MatchmakingClient::handlePacket(MatchmakingMessageType type, u64 lobbyId, c
             break;
             
         case MatchmakingMessageType::MatchFound:
-            LOG_INFO("Match found! Lobby ID: {}", lobbyId);
+            LOG_INFO("=== MatchFound packet received! Lobby ID: {} ===", lobbyId);
             currentLobby_.lobbyId = lobbyId;
             currentLobby_.state = LobbyState::Found;
             // Initialize accept arrays using payload if provided.
@@ -227,8 +228,14 @@ void MatchmakingClient::handlePacket(MatchmakingMessageType type, u64 lobbyId, c
 
                 acceptTimeoutSeconds_ = p->acceptTimeoutSeconds;
                 acceptElapsedSeconds_ = 0.0f;
+                LOG_INFO("MatchFound: requiredPlayers={}, timeout={}", p->requiredPlayers, p->acceptTimeoutSeconds);
             }
-            if (onMatchFound_) onMatchFound_(currentLobby_);
+            if (onMatchFound_) {
+                LOG_INFO("Calling onMatchFound_ callback");
+                onMatchFound_(currentLobby_);
+            } else {
+                LOG_WARN("onMatchFound_ callback is not set!");
+            }
             break;
 
         case MatchmakingMessageType::MatchAcceptStatus:
@@ -329,11 +336,82 @@ void MatchmakingClient::handlePacket(MatchmakingMessageType type, u64 lobbyId, c
             if (onQueueRejected_) onQueueRejected_(reason, authFailed, isBanned);
             break;
         }
+        
+        case MatchmakingMessageType::ActiveGameInfo:
+        {
+            if (payload && payloadSize >= sizeof(Wire::ActiveGameInfoPayload)) {
+                const auto* p = static_cast<const Wire::ActiveGameInfoPayload*>(payload);
+                hasActiveGame_ = true;
+                activeGameInfo_.lobbyId = p->lobbyId;
+                activeGameInfo_.accountId = p->accountId;
+                activeGameInfo_.serverIP = std::string(p->serverIp, strnlen(p->serverIp, sizeof(p->serverIp)));
+                activeGameInfo_.serverPort = p->serverPort;
+                activeGameInfo_.teamSlot = p->teamSlot;
+                activeGameInfo_.heroName = std::string(p->heroName, strnlen(p->heroName, sizeof(p->heroName)));
+                activeGameInfo_.gameTime = p->gameTime;
+                activeGameInfo_.disconnectTime = p->disconnectTime;
+                activeGameInfo_.canReconnect = (p->canReconnect != 0);
+                
+                LOG_INFO("Active game found! Lobby: {}, Server: {}:{}, Hero: {}", 
+                         p->lobbyId, activeGameInfo_.serverIP, p->serverPort, activeGameInfo_.heroName);
+                
+                if (onActiveGameFound_) onActiveGameFound_(activeGameInfo_);
+            }
+            break;
+        }
+        
+        case MatchmakingMessageType::NoActiveGame:
+        {
+            LOG_INFO("No active game to reconnect");
+            hasActiveGame_ = false;
+            activeGameInfo_ = ActiveGameInfo{};
+            if (onNoActiveGame_) onNoActiveGame_();
+            break;
+        }
+        
+        case MatchmakingMessageType::ReconnectApproved:
+        {
+            if (payload && payloadSize >= sizeof(Wire::ActiveGameInfoPayload)) {
+                const auto* p = static_cast<const Wire::ActiveGameInfoPayload*>(payload);
+                std::string serverIP = std::string(p->serverIp, strnlen(p->serverIp, sizeof(p->serverIp)));
+                std::string heroName = std::string(p->heroName, strnlen(p->heroName, sizeof(p->heroName)));
+                
+                LOG_INFO("Reconnect approved! Server: {}:{}", serverIP, p->serverPort);
+                
+                if (onReconnectApproved_) {
+                    onReconnectApproved_(serverIP, p->serverPort, p->teamSlot, heroName);
+                }
+            }
+            break;
+        }
             
         default:
             // ignore
             break;
     }
+}
+
+void MatchmakingClient::checkForActiveGame(u64 accountId) {
+    if (!connected_) return;
+    
+    Wire::CheckActiveGamePayload payload{};
+    payload.accountId = accountId;
+    Wire::CopyCString(payload.sessionToken, sizeof(payload.sessionToken), sessionToken_);
+    
+    LOG_INFO("Checking for active game for account {}", accountId);
+    sendPacket(MatchmakingMessageType::CheckActiveGame, 0, &payload, sizeof(payload));
+}
+
+void MatchmakingClient::requestReconnect(u64 lobbyId) {
+    if (!connected_) return;
+    
+    Wire::ReconnectRequestPayload payload{};
+    payload.accountId = activeGameInfo_.accountId;  // Use real accountId from active game info
+    payload.lobbyId = lobbyId;
+    Wire::CopyCString(payload.sessionToken, sizeof(payload.sessionToken), sessionToken_);
+    
+    LOG_INFO("Requesting reconnect to lobby {} (accountId={})", lobbyId, payload.accountId);
+    sendPacket(MatchmakingMessageType::ReconnectRequest, lobbyId, &payload, sizeof(payload));
 }
 
 void MatchmakingClient::sendHeartbeat() {

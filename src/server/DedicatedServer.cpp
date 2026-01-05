@@ -12,19 +12,43 @@
 #include <atomic>
 #include <random>
 #include <vector>
+#include <unordered_map>
 
 using namespace WorldEditor;
 using namespace WorldEditor::Network;
 using namespace WorldEditor::Matchmaking;
 using namespace WorldEditor::Matchmaking::Wire;
 
+// Helper to copy string safely
+static void CopyString(char* dst, size_t dstSize, const std::string& src) {
+    if (!dst || dstSize == 0) return;
+    size_t len = std::min(src.size(), dstSize - 1);
+    std::memcpy(dst, src.c_str(), len);
+    dst[len] = '\0';
+}
+
 // ============ Dedicated Server Application ============
 
 class DedicatedServerApp {
 public:
+    // Client info for tracking
+    struct ClientInfo {
+        ClientId clientId = 0;
+        u64 accountId = 0;
+        std::string username;
+        std::string heroName;
+        u8 teamSlot = 0;
+        bool isConnected = false;
+    };
+    
     DedicatedServerApp() 
         : running_(false)
-        , tickRate_(NetworkConfig::SERVER_TICK_RATE) {
+        , tickRate_(NetworkConfig::SERVER_TICK_RATE)
+        , gameStarted_(false)
+        , gameEnded_(false)
+        , gameEndTimer_(0.0f)
+        , gameStartDelay_(0.0f)
+        , minPlayersToPlay_(1) {  // Minimum 1 for testing, should be 2+ in production
     }
     
     bool initialize(u16 port, const char* coordinatorIP = "127.0.0.1", u16 coordinatorPort = kCoordinatorPort) {
@@ -54,6 +78,12 @@ public:
         
         networkServer_->setOnClientInput([this](ClientId clientId, const PlayerInput& input) {
             onClientInput(clientId, input);
+        });
+        
+        // Start game when all heroes are picked (with delay)
+        networkServer_->setOnAllPicked([this]() {
+            LOG_INFO("All heroes picked! Game starting in 3 seconds...");
+            gameStartDelay_ = 3.0f;  // 3 second delay before game starts
         });
         
         // Start network server
@@ -128,6 +158,27 @@ public:
             
             // Network update (process packets)
             networkServer_->update(deltaTime);
+            
+            // Handle game end timer
+            if (gameEnded_ && gameEndTimer_ > 0.0f) {
+                gameEndTimer_ -= deltaTime;
+                if (gameEndTimer_ <= 0.0f) {
+                    LOG_INFO("Game end timer expired, shutting down server...");
+                    running_ = false;
+                    break;
+                }
+            }
+            
+            // Handle game start delay (after hero pick)
+            if (gameStartDelay_ > 0.0f && !gameStarted_) {
+                gameStartDelay_ -= deltaTime;
+                if (gameStartDelay_ <= 0.0f) {
+                    LOG_INFO("Game start delay expired, starting game!");
+                    serverWorld_->startGame();
+                    gameStarted_ = true;
+                    gameStartDelay_ = 0.0f;
+                }
+            }
 
             // Matchmaking side-channel (register/heartbeat + AssignLobby)
             if (mmSocket_.isValid()) {
@@ -170,25 +221,129 @@ private:
     void onClientConnected(ClientId clientId) {
         LOG_INFO(">>> Client {} connected", clientId);
         
+        // Get username and accountId from NetworkServer
+        std::string username = networkServer_->getClientUsername(clientId);
+        u64 accountId = networkServer_->getClientAccountId(clientId);
+        if (username.empty()) {
+            username = "Player" + std::to_string(clientId);
+        }
+        
+        // Create client info
+        ClientInfo info;
+        info.clientId = clientId;
+        info.accountId = accountId;
+        info.username = username;
+        info.teamSlot = static_cast<u8>(clients_.size());  // Assign slot based on join order
+        info.isConnected = true;
+        clients_[clientId] = info;
+        
+        LOG_INFO(">>> Player '{}' connected (slot {}, accountId={})", username, info.teamSlot, accountId);
+        
         // Add client to server world
         serverWorld_->addClient(clientId);
         
-        // Start game if not already started
-        if (!serverWorld_->isGameActive()) {
-            LOG_INFO("Starting game...");
-            serverWorld_->startGame();
+        // Check if we should start hero pick phase
+        size_t clientCount = networkServer_->getClientCount();
+        
+        // Start hero pick when we have at least 2 players (for testing)
+        // In production, wait for expected player count from matchmaking
+        if (clientCount >= 2 && !networkServer_->isInHeroPickPhase() && !gameStarted_) {
+            LOG_INFO("Starting hero pick phase with {} players...", clientCount);
+            networkServer_->startHeroPickPhase(30.0f);  // 30 seconds to pick
         }
+        
+        // Game will start after hero pick phase completes (via onAllPicked callback)
     }
     
     void onClientDisconnected(ClientId clientId) {
-        LOG_INFO("<<< Client {} disconnected", clientId);
+        // Get client info before removing
+        std::string username = "Unknown";
+        u64 accountId = 0;
+        u8 clientTeamSlot = 0;
+        std::string heroName;
+        
+        auto it = clients_.find(clientId);
+        if (it != clients_.end()) {
+            username = it->second.username;
+            accountId = it->second.accountId;
+            clientTeamSlot = it->second.teamSlot;
+            heroName = it->second.heroName;
+            it->second.isConnected = false;
+        }
+        
+        LOG_INFO("<<< Player '{}' disconnected (slot {}, accountId={})", username, clientTeamSlot, accountId);
+        
+        // Notify matchmaking coordinator about disconnect
+        if (mmSocket_.isValid() && currentLobbyId_ != 0) {
+            PlayerDisconnectedPayload p{};
+            p.serverId = serverId_;
+            p.lobbyId = currentLobbyId_;
+            p.accountId = accountId;  // Use real accountId from auth
+            p.teamSlot = clientTeamSlot;
+            CopyString(p.heroName, sizeof(p.heroName), heroName);
+            sendPacketToCoordinator_(MatchmakingMessageType::PlayerDisconnected, &p, sizeof(p), currentLobbyId_);
+            LOG_INFO("Notified coordinator: player '{}' (accountId={}) disconnected", username, accountId);
+        }
+        
         serverWorld_->removeClient(clientId);
         
-        // Stop game if no clients
-        if (networkServer_->getClientCount() == 0) {
-            LOG_INFO("No clients connected, pausing game");
+        size_t remainingClients = networkServer_->getClientCount();
+        
+        // Check if game should end
+        if (remainingClients == 0) {
+            LOG_INFO("=== ALL PLAYERS DISCONNECTED ===");
+            LOG_INFO("Game ended - no players remaining");
+            
+            // Calculate winner based on game state
+            calculateGameResult();
+            
+            // Pause game
             serverWorld_->pauseGame();
+            
+            // Schedule server shutdown after a delay
+            LOG_INFO("Server will shutdown in 5 seconds...");
+            gameEndTimer_ = 5.0f;
+            gameEnded_ = true;
         }
+        else if (gameStarted_ && remainingClients < minPlayersToPlay_) {
+            // Not enough players to continue - end game
+            LOG_INFO("=== NOT ENOUGH PLAYERS ===");
+            LOG_INFO("Only {} players remaining, minimum {} required", remainingClients, minPlayersToPlay_);
+            
+            calculateGameResult();
+            gameEnded_ = true;
+            gameEndTimer_ = 10.0f;  // Give time for remaining players to see result
+        }
+    }
+    
+    void calculateGameResult() {
+        // Count remaining players per team
+        // Radiant: slots 0-4, Dire: slots 5-9
+        int radiantPlayers = 0;
+        int direPlayers = 0;
+        
+        // TODO: Get actual team counts from NetworkServer client info
+        // For now, simple logic: team with more remaining players wins
+        
+        f32 gameTime = serverWorld_->getGameTime();
+        
+        LOG_INFO("=== GAME RESULT ===");
+        LOG_INFO("  Game Duration: {:.1f} seconds", gameTime);
+        
+        if (radiantPlayers > direPlayers) {
+            LOG_INFO("  Winner: RADIANT");
+            LOG_INFO("  Radiant players: {}, Dire players: {}", radiantPlayers, direPlayers);
+        } else if (direPlayers > radiantPlayers) {
+            LOG_INFO("  Winner: DIRE");
+            LOG_INFO("  Radiant players: {}, Dire players: {}", radiantPlayers, direPlayers);
+        } else {
+            // Both teams have same players (or 0) - check other conditions
+            // For now, if all disconnected, it's a draw
+            LOG_INFO("  Result: DRAW (all players disconnected)");
+        }
+        
+        // TODO: Send game result to matchmaking coordinator for stats
+        // TODO: Update player MMR based on result
     }
     
     void onClientInput(ClientId clientId, const PlayerInput& input) {
@@ -259,6 +414,7 @@ private:
             const auto type = (MatchmakingMessageType)h.type;
             if (type == MatchmakingMessageType::AssignLobby && payloadSize >= sizeof(AssignLobbyPayload)) {
                 const auto* p = (const AssignLobbyPayload*)payload;
+                currentLobbyId_ = p->lobbyId;
                 LOG_INFO("MM: Assigned lobby {} (expectedPlayers={})", p->lobbyId, p->expectedPlayers);
             }
         }
@@ -268,14 +424,25 @@ private:
     std::unique_ptr<NetworkServer> networkServer_;
     std::atomic<bool> running_;
     u32 tickRate_;
+    
+    // Game state
+    bool gameStarted_ = false;
+    bool gameEnded_ = false;
+    f32 gameEndTimer_ = 0.0f;
+    f32 gameStartDelay_ = 0.0f;  // Delay after hero pick before game starts
+    size_t minPlayersToPlay_ = 1;  // Minimum players to continue game
 
     // Matchmaking (server pool)
     UDPSocket mmSocket_;
     std::string coordinatorIP_ = "127.0.0.1";
     u16 coordinatorPort_ = kCoordinatorPort;
     u64 serverId_ = 0;
+    u64 currentLobbyId_ = 0;  // Current game lobby ID
     f32 heartbeatTimer_ = 0.0f;
     f32 heartbeatInterval_ = 2.0f;
+    
+    // Client tracking
+    std::unordered_map<ClientId, ClientInfo> clients_;
 };
 
 // ============ Main Entry Point ============

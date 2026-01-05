@@ -1,3 +1,10 @@
+/**
+ * InGameState - Active gameplay state
+ * 
+ * Uses shared NetworkClient from GameStateManager for persistent connection.
+ * Connection established in HeroPickState persists here.
+ */
+
 #include "../GameState.h"
 #include "../DebugConsole.h"
 #include "../ui/panorama/CUIEngine.h"
@@ -5,18 +12,19 @@
 #include "../ui/panorama/GameEvents.h"
 #include "../../client/ClientWorld.h"
 #include "../../server/ServerWorld.h"
+#include "../../world/World.h"
+#include "../../world/Components.h"
 #include "../../network/NetworkClient.h"
 #include "../../common/GameInput.h"
+#include "../../auth/AuthClient.h"
+#include "../../renderer/DirectXRenderer.h"
+#include "../../ui/EditorCamera.h"
+#include <glm/gtc/matrix_transform.hpp>
+
+// External renderer from GameMain.cpp
+extern DirectXRenderer* g_renderer;
 
 namespace Game {
-
-// ============ Network Client Wrapper ============
-
-class InGameState::NetworkClientWrapper {
-public:
-    WorldEditor::Network::NetworkClient client;
-    bool isMultiplayer = false;
-};
 
 // ============ Game HUD Structure ============
 
@@ -25,6 +33,7 @@ struct InGameState::GameHUD {
     
     // Top bar
     std::shared_ptr<Panorama::CPanel2D> topBar;
+    std::shared_ptr<Panorama::CButton> menuButton;  // Menu button (top-left, Dota 2 style)
     std::shared_ptr<Panorama::CLabel> gameTimeLabel;
     std::shared_ptr<Panorama::CLabel> debugLabel;
     
@@ -50,14 +59,65 @@ struct InGameState::GameHUD {
 // ============ InGameState Implementation ============
 
 InGameState::InGameState() 
-    : m_hud(std::make_unique<GameHUD>())
-    , m_networkClient(std::make_unique<NetworkClientWrapper>()) {}
+    : m_hud(std::make_unique<GameHUD>()) {}
 
 InGameState::~InGameState() = default;
+
+// Helper to get shared NetworkClient from GameStateManager
+WorldEditor::Network::NetworkClient* InGameState::GetNetworkClient() {
+    return m_manager ? m_manager->GetNetworkClient() : nullptr;
+}
 
 void InGameState::OnEnter() {
     m_isPaused = false;
     CreateHUD();
+    
+    // Log world state
+    LOG_INFO("InGameState::OnEnter() - gameWorld={}, clientWorld={}, serverWorld={}", 
+             m_gameWorld ? "valid" : "null",
+             m_clientWorld ? "valid" : "null", 
+             m_serverWorld ? "valid" : "null");
+    if (m_gameWorld) {
+        LOG_INFO("InGameState: gameWorld has {} entities", m_gameWorld->getEntityCount());
+    }
+    
+    // Check if we need to connect to game server (reconnect case)
+    if (m_manager && !m_manager->IsConnectedToGameServer()) {
+        // Get server target from GameStateManager
+        std::string serverIp;
+        u16 serverPort;
+        m_manager->GetGameServerTarget(serverIp, serverPort);
+        
+        if (!serverIp.empty() && serverPort != 0) {
+            // Get username from AuthClient
+            std::string username = "Player";
+            if (auto* authClient = m_manager->GetAuthClient()) {
+                if (authClient->IsAuthenticated()) {
+                    username = authClient->GetUsername();
+                }
+            }
+            
+            LOG_INFO("InGameState: Connecting to game server {}:{} (reconnect)", serverIp, serverPort);
+            ConsoleLog("Reconnecting to game server...");
+            
+            if (m_manager->ConnectToGameServer(serverIp, serverPort, username)) {
+                LOG_INFO("InGameState: Connection initiated");
+            } else {
+                LOG_ERROR("InGameState: Failed to connect to game server");
+                ConsoleLog("ERROR: Failed to connect to game server");
+            }
+        }
+    }
+    
+    // Setup callbacks if connected
+    if (m_manager && m_manager->IsConnectedToGameServer()) {
+        LOG_INFO("InGameState: Using connection to game server");
+        ConsoleLog("Connected to game server");
+        SetupNetworkCallbacks();
+    } else {
+        LOG_WARN("InGameState: No active connection to game server!");
+        ConsoleLog("WARNING: Not connected to game server");
+    }
     
     // Subscribe to game events
     Panorama::GameEvents_Subscribe("Player_HealthChanged", [this](const Panorama::CGameEventData& data) {
@@ -79,8 +139,24 @@ void InGameState::OnEnter() {
     });
 }
 
+void InGameState::SetupNetworkCallbacks() {
+    auto* client = GetNetworkClient();
+    if (!client) return;
+    
+    // Setup game-specific callbacks
+    // These will override HeroPickState callbacks
+    
+    // TODO: Add InGame-specific network callbacks
+    // - Game state updates
+    // - Entity snapshots
+    // - Player actions
+}
+
 void InGameState::OnExit() {
-    DisconnectFromServer();
+    // Disconnect from game server when leaving InGame
+    if (m_manager) {
+        m_manager->DisconnectFromGameServer();
+    }
     DestroyHUD();
 }
 
@@ -98,6 +174,7 @@ void InGameState::OnResume() {
     }
 }
 
+
 void InGameState::CreateHUD() {
     auto& engine = Panorama::CUIEngine::Instance();
     auto* uiRoot = engine.GetRoot();
@@ -106,43 +183,60 @@ void InGameState::CreateHUD() {
     f32 screenW = engine.GetScreenWidth();
     f32 screenH = engine.GetScreenHeight();
     
-    // ============ HUD Root ============
+    // HUD Root
     m_hud->root = std::make_shared<Panorama::CPanel2D>("HUDRoot");
     m_hud->root->AddClass("HUDRoot");
     m_hud->root->GetStyle().width = Panorama::Length::Fill();
     m_hud->root->GetStyle().height = Panorama::Length::Fill();
-    m_hud->root->SetAttribute("hittest", "false");  // Allow clicks through to game
+    m_hud->root->SetAttribute("hittest", "false");
     uiRoot->AddChild(m_hud->root);
     
-    // ============ Top Bar ============
+    // Top Bar (full width, semi-transparent)
     m_hud->topBar = std::make_shared<Panorama::CPanel2D>("TopBar");
     m_hud->topBar->AddClass("HUDTopBar");
     m_hud->topBar->GetStyle().width = Panorama::Length::Fill();
     m_hud->topBar->GetStyle().height = Panorama::Length::Px(50);
     m_hud->topBar->GetStyle().backgroundColor = Panorama::Color(0.0f, 0.0f, 0.0f, 0.6f);
-    m_hud->topBar->GetStyle().horizontalAlign = Panorama::HorizontalAlign::Center;
     m_hud->root->AddChild(m_hud->topBar);
     
-    // Game Time
+    // Menu Button (top-left corner, Dota 2 style)
+    m_hud->menuButton = std::make_shared<Panorama::CButton>("MENU", "MenuButton");
+    m_hud->menuButton->AddClass("MenuButton");
+    m_hud->menuButton->GetStyle().width = Panorama::Length::Px(80);
+    m_hud->menuButton->GetStyle().height = Panorama::Length::Px(36);
+    m_hud->menuButton->GetStyle().marginLeft = Panorama::Length::Px(10);
+    m_hud->menuButton->GetStyle().marginTop = Panorama::Length::Px(7);
+    m_hud->menuButton->GetStyle().backgroundColor = Panorama::Color(0.15f, 0.15f, 0.18f, 0.9f);
+    m_hud->menuButton->GetStyle().borderRadius = 4.0f;
+    m_hud->menuButton->GetStyle().fontSize = 14.0f;
+    m_hud->menuButton->SetOnActivate([this]() {
+        // Go to main menu but keep game running (push state)
+        if (m_manager) {
+            m_manager->SetGameInProgress(true);  // Mark that we have an active game
+            m_manager->PushState(EGameState::MainMenu);
+        }
+    });
+    m_hud->topBar->AddChild(m_hud->menuButton);
+    
+    // Game Time Label - centered at top of screen (Dota 2 style)
     m_hud->gameTimeLabel = std::make_shared<Panorama::CLabel>("00:00", "GameTime");
     m_hud->gameTimeLabel->AddClass("GameTimeLabel");
-    m_hud->gameTimeLabel->GetStyle().fontSize = 28.0f;
-    m_hud->gameTimeLabel->GetStyle().color = Panorama::Color::White();
-    m_hud->gameTimeLabel->GetStyle().horizontalAlign = Panorama::HorizontalAlign::Center;
-    m_hud->gameTimeLabel->GetStyle().verticalAlign = Panorama::VerticalAlign::Center;
+    m_hud->gameTimeLabel->GetStyle().fontSize = 32.0f;
+    m_hud->gameTimeLabel->GetStyle().color = Panorama::Color(1.0f, 0.85f, 0.4f, 1.0f); // Gold color
+    m_hud->gameTimeLabel->GetStyle().marginLeft = Panorama::Length::Px((screenW - 80) / 2); // Center horizontally
+    m_hud->gameTimeLabel->GetStyle().marginTop = Panorama::Length::Px(8);
     m_hud->topBar->AddChild(m_hud->gameTimeLabel);
     
-    // Debug info (right side of top bar)
+    // Debug label (right side of top bar)
     auto debugLabel = std::make_shared<Panorama::CLabel>("DEBUG", "DebugInfo");
-    debugLabel->GetStyle().fontSize = 16.0f;
-    debugLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
-    debugLabel->GetStyle().horizontalAlign = Panorama::HorizontalAlign::Right;
-    debugLabel->GetStyle().verticalAlign = Panorama::VerticalAlign::Center;
-    debugLabel->GetStyle().marginRight = Panorama::Length::Px(20);
+    debugLabel->GetStyle().fontSize = 14.0f;
+    debugLabel->GetStyle().color = Panorama::Color(0.6f, 0.6f, 0.6f, 1.0f);
+    debugLabel->GetStyle().marginLeft = Panorama::Length::Px(screenW - 200);
+    debugLabel->GetStyle().marginTop = Panorama::Length::Px(16);
     m_hud->topBar->AddChild(debugLabel);
     m_hud->debugLabel = debugLabel;
     
-    // ============ Hero HUD (Bottom Left) ============
+    // Hero HUD (Bottom Left)
     m_hud->heroHUD = std::make_shared<Panorama::CPanel2D>("HeroHUD");
     m_hud->heroHUD->AddClass("HeroHUD");
     m_hud->heroHUD->GetStyle().width = Panorama::Length::Px(300);
@@ -204,7 +298,7 @@ void InGameState::CreateHUD() {
     m_hud->manaLabel->GetStyle().verticalAlign = Panorama::VerticalAlign::Center;
     manaContainer->AddChild(m_hud->manaLabel);
     
-    // ============ Ability Bar (Bottom Center) ============
+    // Ability Bar (Bottom Center)
     m_hud->abilityBar = std::make_shared<Panorama::CPanel2D>("AbilityBar");
     m_hud->abilityBar->AddClass("AbilityBar");
     m_hud->abilityBar->GetStyle().width = Panorama::Length::Px(320);
@@ -219,7 +313,6 @@ void InGameState::CreateHUD() {
     m_hud->abilityBar->GetStyle().paddingTop = Panorama::Length::Px(10);
     m_hud->root->AddChild(m_hud->abilityBar);
     
-    // Create 4 ability slots (Q, W, E, R)
     const char* hotkeys[] = {"Q", "W", "E", "R"};
     for (int i = 0; i < 4; i++) {
         auto slot = std::make_shared<Panorama::CPanel2D>("AbilitySlot" + std::to_string(i));
@@ -244,7 +337,7 @@ void InGameState::CreateHUD() {
         m_hud->abilityBar->AddChild(slot);
     }
     
-    // ============ Minimap (Bottom Right) ============
+    // Minimap (Bottom Right)
     m_hud->minimap = std::make_shared<Panorama::CPanel2D>("Minimap");
     m_hud->minimap->AddClass("Minimap");
     m_hud->minimap->GetStyle().width = Panorama::Length::Px(220);
@@ -259,7 +352,7 @@ void InGameState::CreateHUD() {
     m_hud->minimap->GetStyle().borderColor = Panorama::Color(0.3f, 0.35f, 0.3f, 0.8f);
     m_hud->root->AddChild(m_hud->minimap);
     
-    // ============ Pause Overlay ============
+    // Pause Overlay
     m_hud->pauseOverlay = std::make_shared<Panorama::CPanel2D>("PauseOverlay");
     m_hud->pauseOverlay->AddClass("PauseOverlay");
     m_hud->pauseOverlay->GetStyle().width = Panorama::Length::Fill();
@@ -268,7 +361,6 @@ void InGameState::CreateHUD() {
     m_hud->pauseOverlay->SetVisible(false);
     m_hud->root->AddChild(m_hud->pauseOverlay);
     
-    // Pause menu container
     auto pauseMenu = std::make_shared<Panorama::CPanel2D>("PauseMenu");
     pauseMenu->GetStyle().width = Panorama::Length::Px(300);
     pauseMenu->GetStyle().height = Panorama::Length::FitChildren();
@@ -319,7 +411,6 @@ void InGameState::DestroyHUD() {
         }
     }
     
-    // Reset all HUD elements
     m_hud->root.reset();
     m_hud->topBar.reset();
     m_hud->gameTimeLabel.reset();
@@ -335,32 +426,30 @@ void InGameState::DestroyHUD() {
     m_hud->disconnectButton.reset();
 }
 
+
 void InGameState::Update(f32 deltaTime) {
     if (m_isPaused) {
-        // Only update UI when paused
         auto& engine = Panorama::CUIEngine::Instance();
         engine.Update(deltaTime);
         return;
     }
     
-    // Update network (send/receive packets)
+    // Update shared network client
     UpdateNetwork(deltaTime);
-    
-    // Update server world (game logic) - only if not multiplayer
-    if (m_serverWorld && !m_networkClient->isMultiplayer) {
-        m_serverWorld->update(deltaTime);
-    }
     
     // Update client world (prediction/interpolation)
     if (m_clientWorld) {
         m_clientWorld->update(deltaTime);
     }
     
-    // Update HUD from game state
     UpdateHUDFromGameState();
     
-    // Update game time display
-    f32 gameTime = m_serverWorld ? m_serverWorld->getGameTime() : 0.0f;
+    // Update game time display - always from server
+    f32 gameTime = 0.0f;
+    if (auto* client = GetNetworkClient()) {
+        gameTime = client->getServerGameTime();
+    }
+    
     int minutes = (int)(gameTime / 60);
     int seconds = (int)gameTime % 60;
     char timeStr[16];
@@ -369,7 +458,6 @@ void InGameState::Update(f32 deltaTime) {
         m_hud->gameTimeLabel->SetText(timeStr);
     }
     
-    // Update UI
     auto& engine = Panorama::CUIEngine::Instance();
     engine.Update(deltaTime);
 }
@@ -380,65 +468,118 @@ void InGameState::SetWorlds(std::unique_ptr<WorldEditor::ClientWorld> client,
     m_serverWorld = std::move(server);
 }
 
+void InGameState::SetWorlds(std::unique_ptr<WorldEditor::ClientWorld> client,
+                            std::unique_ptr<WorldEditor::ServerWorld> server,
+                            std::unique_ptr<WorldEditor::World> gameWorld) {
+    m_clientWorld = std::move(client);
+    m_serverWorld = std::move(server);
+    m_gameWorld = std::move(gameWorld);
+}
+
 void InGameState::UpdateHUDFromGameState() {
-    // Update debug info
-    if (m_hud->debugLabel && m_clientWorld) {
-        size_t entityCount = m_clientWorld->getEntityCount();
-        bool connected = IsConnectedToServer();
+    if (m_hud->debugLabel) {
+        size_t entityCount = m_clientWorld ? m_clientWorld->getEntityCount() : 0;
+        bool connected = m_manager && m_manager->IsConnectedToGameServer();
         std::string debugText = "Entities: " + std::to_string(entityCount);
-        if (connected) {
-            debugText += " | Connected";
-        } else if (m_networkClient->isMultiplayer) {
-            debugText += " | Connecting...";
-        }
+        debugText += connected ? " | Online" : " | Local";
         m_hud->debugLabel->SetText(debugText);
     }
     
-    // Update game time
-    if (m_hud->gameTimeLabel && m_clientWorld) {
-        f32 gameTime = m_clientWorld->getGameTime();
-        int minutes = (int)gameTime / 60;
-        int seconds = (int)gameTime % 60;
-        char timeStr[16];
-        snprintf(timeStr, sizeof(timeStr), "%02d:%02d", minutes, seconds);
-        m_hud->gameTimeLabel->SetText(timeStr);
-    }
-    
-    // TODO: Get player entity from client world and update HUD
-    // For now, just use placeholder values
-    
-    // Example: Update health/mana from game state
-    // if (m_clientWorld) {
-    //     auto* player = m_clientWorld->getLocalPlayer();
-    //     if (player) {
-    //         // Update health
-    //         Panorama::CGameEventData healthData;
-    //         healthData.SetFloat("current", player->getHealth());
-    //         healthData.SetFloat("max", player->getMaxHealth());
-    //         Panorama::GameEvents_Fire("Player_HealthChanged", healthData);
-    //     }
-    // }
+    // Game time is updated in Update() method
 }
 
 void InGameState::Render() {
-    // Render 3D world first
     RenderWorld();
-    
-    // Render HUD on top
     RenderHUD();
 }
 
 void InGameState::RenderWorld() {
-    if (!m_clientWorld) return;
+    if (!m_gameWorld || !g_renderer) {
+        return;
+    }
     
-    // For now, render game world using Panorama 2D panels
-    // This is a temporary solution until we implement proper 3D rendering
+    auto* commandList = g_renderer->GetCommandList();
+    if (!commandList) return;
     
-    // The world is rendered as a top-down 2D view
-    // Entities are shown as colored rectangles
+    // Update lighting (like editor does)
+    static float totalTime = 0.0f;
+    totalTime += 0.016f; // ~60fps approximation
     
-    // TODO: Create Panorama panels for each entity and position them
-    // For now, we just have the HUD which shows entity count
+    // Use EditorCamera directly (same as editor game mode)
+    static WorldEditor::EditorCamera camera;
+    static bool cameraInitialized = false;
+    
+    if (!cameraInitialized) {
+        // Setup Dota-style camera (same as editor game mode)
+        camera.yawDeg = -45.0f;
+        camera.pitchDeg = -45.0f;
+        camera.fovDeg = 60.0f;
+        camera.nearPlane = 0.1f;
+        camera.farPlane = 50000.0f;
+        camera.orthographic = false;
+        camera.lockTopDown = false;
+        
+        // Find focus point (same logic as editor game mode)
+        Vec3 focusPoint(150.0f, 0.0f, 150.0f);  // Default fallback
+        float cameraHeight = 50.0f;
+        
+        // Determine player's team from GameStateManager
+        bool isRadiant = true;  // Default to Radiant
+        if (m_manager) {
+            isRadiant = m_manager->IsPlayerRadiant();
+            LOG_INFO("InGameState: Player is on {} team (slot {})", 
+                     isRadiant ? "Radiant" : "Dire", m_manager->GetPlayerTeamSlot());
+        }
+        
+        // Team ID: Radiant = 1, Dire = 2
+        int playerTeamId = isRadiant ? 1 : 2;
+        
+        // Try to center on terrain first
+        auto& reg = m_gameWorld->getEntityManager().getRegistry();
+        auto viewT = reg.view<WorldEditor::TerrainComponent>();
+        if (auto it = viewT.begin(); it != viewT.end()) {
+            const auto& t = viewT.get<WorldEditor::TerrainComponent>(*it);
+            focusPoint = Vec3(t.size * 0.5f, 0.0f, t.size * 0.5f);
+        }
+        
+        // Find player's team base
+        auto viewBases = reg.view<WorldEditor::ObjectComponent, WorldEditor::TransformComponent>();
+        for (auto e : viewBases) {
+            const auto& obj = viewBases.get<WorldEditor::ObjectComponent>(e);
+            if (obj.type == WorldEditor::ObjectType::Base && obj.teamId == playerTeamId) {
+                const auto& tr = viewBases.get<WorldEditor::TransformComponent>(e);
+                focusPoint = tr.position;
+                LOG_INFO("InGameState: Camera focused on {} base at ({}, {}, {})", 
+                         isRadiant ? "Radiant" : "Dire", focusPoint.x, focusPoint.y, focusPoint.z);
+                break;
+            }
+        }
+        
+        // Calculate camera position from focus point (same as editor)
+        Vec3 forward = camera.getForwardLH();
+        float fy = forward.y;
+        float distance = 95.0f;
+        if (std::abs(fy) > 0.0001f) {
+            distance = (focusPoint.y - cameraHeight) / fy;
+            distance = std::clamp(distance, 5.0f, 10000.0f);
+        }
+        camera.position = focusPoint - forward * distance;
+        
+        cameraInitialized = true;
+    }
+    
+    float screenW = (float)g_renderer->GetWidth();
+    float screenH = (float)g_renderer->GetHeight();
+    float aspect = screenW / screenH;
+    
+    // Update lighting with camera position
+    g_renderer->UpdateLighting(camera.position, totalTime);
+    
+    // Get view-projection matrix from EditorCamera (same method as editor uses)
+    Mat4 viewProjMatrix = camera.getViewProjLH_ZO(aspect);
+    
+    // Render the world (terrain, towers, buildings from scene.json)
+    m_gameWorld->render(commandList, viewProjMatrix, camera.position, false);
 }
 
 void InGameState::RenderHUD() {
@@ -447,17 +588,11 @@ void InGameState::RenderHUD() {
 }
 
 bool InGameState::OnKeyDown(i32 key) {
-    // ESC to toggle pause
     if (key == 27) {  // VK_ESCAPE
         OnEscapePressed();
         return true;
     }
-    
     if (m_isPaused) return false;
-    
-    // Ability hotkeys
-    // Q, W, E, R would trigger abilities
-    
     return false;
 }
 
@@ -489,60 +624,21 @@ void InGameState::OnEscapePressed() {
 void InGameState::OnDisconnect() {
     Panorama::CGameEventData data;
     Panorama::GameEvents_Fire("Game_Disconnect", data);
-    
     m_manager->ChangeState(EGameState::MainMenu);
 }
 
 // ============ Network Methods ============
 
-void InGameState::ConnectToServer(const char* serverIP, u16 port) {
-    if (!m_networkClient) return;
-    
-    LOG_INFO("Connecting to server {}:{}...", serverIP, port);
-    ConsoleLog(std::string("Connecting to ") + serverIP + ":" + std::to_string(port) + "...");
-    
-    if (m_networkClient->client.connect(serverIP, port)) {
-        m_networkClient->isMultiplayer = true;
-        m_wasConnected = false;  // Track if we've shown connection message
-        LOG_INFO("Connection initiated");
-        ConsoleLog("Connection initiated - waiting for server response...");
-    } else {
-        LOG_ERROR("Failed to initiate connection");
-        ConsoleLog("ERROR: Failed to initiate connection!");
-    }
-}
-
-void InGameState::DisconnectFromServer() {
-    if (!m_networkClient) return;
-    
-    if (m_networkClient->isMultiplayer) {
-        LOG_INFO("Disconnecting from server...");
-        m_networkClient->client.disconnect();
-        m_networkClient->isMultiplayer = false;
-    }
-}
-
-bool InGameState::IsConnectedToServer() const {
-    return m_networkClient && m_networkClient->isMultiplayer && 
-           m_networkClient->client.isConnected();
-}
-
 void InGameState::UpdateNetwork(f32 deltaTime) {
-    if (!m_networkClient || !m_networkClient->isMultiplayer) return;
+    auto* client = GetNetworkClient();
+    if (!client) return;
     
     // Update network client (receive packets)
-    m_networkClient->client.update(deltaTime);
-    
-    // Check if we just connected
-    if (!m_wasConnected && IsConnectedToServer()) {
-        m_wasConnected = true;
-        LOG_INFO("Successfully connected to server!");
-        ConsoleLog("✓ Connected to server successfully!");
-    }
+    client->update(deltaTime);
     
     // Send input to server (30 Hz)
     m_lastInputSendTime += deltaTime;
-    const f32 inputSendInterval = 1.0f / 30.0f;  // 30 Hz
+    const f32 inputSendInterval = 1.0f / 30.0f;
     
     if (m_lastInputSendTime >= inputSendInterval) {
         SendInputToServer();
@@ -550,38 +646,34 @@ void InGameState::UpdateNetwork(f32 deltaTime) {
     }
     
     // Process snapshots from server
-    if (m_networkClient->client.hasNewSnapshot()) {
+    if (client->hasNewSnapshot()) {
         ProcessServerSnapshot();
-        m_networkClient->client.clearNewSnapshotFlag();
+        client->clearNewSnapshotFlag();
     }
 }
 
 void InGameState::SendInputToServer() {
-    if (!IsConnectedToServer()) return;
+    auto* client = GetNetworkClient();
+    if (!client || !client->isConnected()) return;
     
-    // Create input from current game state
     WorldEditor::PlayerInput input;
     input.sequenceNumber = m_inputSequence++;
     input.commandType = WorldEditor::InputCommandType::None;
     
     // TODO: Collect actual input from mouse/keyboard
-    // For now, just send empty input to keep connection alive
-    
-    m_networkClient->client.sendInput(input);
+    client->sendInput(input);
 }
 
 void InGameState::ProcessServerSnapshot() {
-    if (!IsConnectedToServer()) return;
+    auto* client = GetNetworkClient();
+    if (!client || !client->isConnected()) return;
     
-    const auto& snapshot = m_networkClient->client.getLatestSnapshot();
+    const auto& snapshot = client->getLatestSnapshot();
     
-    // Update client world with server snapshot
     if (m_clientWorld) {
         // TODO: Apply snapshot to client world
-        // m_clientWorld->applySnapshot(snapshot);
     }
     
-    // Log for debugging
     LOG_DEBUG("Received snapshot: tick={}, entities={}", 
               snapshot.tick, snapshot.entities.size());
 }

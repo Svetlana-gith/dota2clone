@@ -8,6 +8,7 @@
 #include <cmath>
 #include <locale>
 #include <codecvt>
+#include <unordered_set>
 
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "dwrite.lib")
@@ -28,6 +29,15 @@ struct UIVertex {
     f32 u, v;           // UV coordinates
     f32 r, g, b, a;     // Color
 };
+
+// SDF text configuration.
+// We generate a single SDF atlas at a stable base pixel size and scale geometry for other font sizes.
+static constexpr float kSdfBaseFontSizePx = 32.0f;
+// Debug mode for text PS:
+// 0 = normal SDF rendering
+// 1 = visualize dist in grayscale (alpha=1)
+// 2 = solid magenta quads (alpha=1) to confirm glyph quads are being drawn
+static constexpr float kSdfDebugMode = 0.0f;
 
 CUIRenderer::CUIRenderer() = default;
 
@@ -108,6 +118,7 @@ void CUIRenderer::BeginFrame() {
     m_vertices.clear();
     m_textVertices.clear();
     m_indices.clear();
+    m_textUploadCursorVertices = 0;
     
     // Reset effects
     ClearEffects();
@@ -163,6 +174,11 @@ void CUIRenderer::FlushBatch() {
     
     float opacityConstant = m_currentOpacity;
     m_commandList->SetGraphicsRoot32BitConstants(1, 1, &opacityConstant, 0);
+
+    // SDF constant slot exists in the root signature; solid PS doesn't use it.
+    // Keep it deterministic anyway.
+    float sdfConsts[2] = { 1.0f, 0.0f };
+    m_commandList->SetGraphicsRoot32BitConstants(2, 2, sdfConsts, 0);
     
     // Create vertex buffer view for solid geometry (starts at 0)
     D3D12_VERTEX_BUFFER_VIEW solidView = {};
@@ -184,19 +200,33 @@ void CUIRenderer::FlushBatch() {
 void CUIRenderer::FlushTextBatch() {
     if (m_textVertices.empty() || !m_commandList || !m_pipelineStateTextured) return;
     if (!m_currentFont) return;
-    
+
+    // Log EVERY flush to diagnose batching issues
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
     
-    // Upload vertex data to second half of buffer (offset = 10000 vertices)
-    const size_t textOffset = 10000 * sizeof(UIVertex);
+    // Upload vertex data to the second half of the buffer.
+    // IMPORTANT: We can flush text multiple times per frame (e.g. different font sizes).
+    // Each flush must use a unique offset to avoid overwriting data referenced by earlier draw calls.
+    static constexpr size_t kMaxVerticesPerFrame = 120000;
+    static constexpr size_t kTextBaseVertexOffset = 60000;
+    const size_t uploadVertexOffset = kTextBaseVertexOffset + m_textUploadCursorVertices;
+    const size_t uploadVertexCount = m_textVertices.size();
+    if (uploadVertexOffset + uploadVertexCount > kMaxVerticesPerFrame) {
+        LOG_ERROR("FlushTextBatch overflow: need {} vertices at offset {}, but max is {}. Dropping text batch.",
+            uploadVertexCount, uploadVertexOffset, kMaxVerticesPerFrame);
+        m_textVertices.clear();
+        return;
+    }
+
+    const size_t textOffsetBytes = uploadVertexOffset * sizeof(UIVertex);
     
     void* pData = nullptr;
     D3D12_RANGE readRange = { 0, 0 };
     HRESULT hr = vertexBuffer->Map(0, &readRange, &pData);
     if (SUCCEEDED(hr)) {
         size_t dataSize = m_textVertices.size() * sizeof(UIVertex);
-        memcpy((uint8_t*)pData + textOffset, m_textVertices.data(), dataSize);
+        memcpy((uint8_t*)pData + textOffsetBytes, m_textVertices.data(), dataSize);
         vertexBuffer->Unmap(0, nullptr);
     } else {
         return;
@@ -212,17 +242,24 @@ void CUIRenderer::FlushTextBatch() {
     
     float opacityConstant = m_currentOpacity;
     m_commandList->SetGraphicsRoot32BitConstants(1, 1, &opacityConstant, 0);
+
+    // Text smoothing scale: for SDF rendering, this affects edge smoothness.
+    // Since we batch all font sizes together now, we use a default scale of 1.0.
+    // TODO: For proper SDF rendering, consider passing scale per-vertex or using screen-space derivatives.
+    float sdfScale = 1.0f;
+    float sdfConsts[2] = { sdfScale, kSdfDebugMode };
+    m_commandList->SetGraphicsRoot32BitConstants(2, 2, sdfConsts, 0);
     
     // Set font texture
     if (m_srvHeap) {
         ID3D12DescriptorHeap* heaps[] = { m_srvHeap };
         m_commandList->SetDescriptorHeaps(1, heaps);
-        m_commandList->SetGraphicsRootDescriptorTable(2, m_currentFont->GetSRV());
+        m_commandList->SetGraphicsRootDescriptorTable(3, m_currentFont->GetSRV());
     }
     
-    // Create vertex buffer view for text (starts at offset)
+    // Create vertex buffer view for text (starts at our per-flush offset)
     D3D12_VERTEX_BUFFER_VIEW textView = {};
-    textView.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + textOffset;
+    textView.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + textOffsetBytes;
     textView.SizeInBytes = (UINT)(m_textVertices.size() * sizeof(UIVertex));
     textView.StrideInBytes = sizeof(UIVertex);
     
@@ -233,6 +270,7 @@ void CUIRenderer::FlushTextBatch() {
     m_commandList->DrawInstanced((UINT)m_textVertices.size(), 1, 0, 0);
     
     // Clear text batch
+    m_textUploadCursorVertices += uploadVertexCount;
     m_textVertices.clear();
 }
 
@@ -486,38 +524,109 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
                            const FontInfo& font, HorizontalAlign hAlign, VerticalAlign vAlign) {
     if (text.empty()) return;
     
-    // Try to use font atlas if available
+    // Debug: log all DrawText calls to understand rendering order
+    // Try to use SDF font atlas if available.
+    // We keep a single atlas at kSdfBaseFontSizePx and scale geometry for other font sizes.
+    const float roundedSize = std::max(1.0f, std::round(font.size));
+    const float geomScale = (kSdfBaseFontSizePx > 0.0f) ? (roundedSize / kSdfBaseFontSizePx) : 1.0f;
+
+    // IMPORTANT:
+    // Text is batched into m_textVertices and flushed once per frame with ONE SRV (m_currentFont).
+    // Since we use a single SDF atlas (kSdfBaseFontSizePx) for all font sizes, we only need to
+    // flush when the font FAMILY changes, not the size. The size only affects geometry scaling.
+    bool currentMatches = (m_currentFont && m_currentFontFamily == font.family);
+
+    if (!currentMatches) {
+        if (!m_textVertices.empty() && m_currentFont) {
+            FlushTextBatch();
+        }
+        m_currentFont = nullptr;
+        m_currentFontFamily.clear();
+    }
+
     FontAtlas* fontAtlas = m_currentFont;
     if (!fontAtlas && m_srvHeap) {
-        // Round font size to a stable pixel height to keep atlas metrics consistent.
-        const float roundedSize = std::max(1.0f, std::round(font.size));
-        fontAtlas = FontManager::Instance().GetFont(font.family, roundedSize);
+        // Always fetch the base SDF atlas; geometry/shader are scaled by requested size.
+        fontAtlas = FontManager::Instance().GetFont(font.family, kSdfBaseFontSizePx);
         if (fontAtlas) {
             m_currentFont = fontAtlas;
+            m_currentFontFamily = font.family;
+        } else {
+            // Log only once per font family to avoid spam
+            static std::unordered_set<std::string> s_loggedMissingFonts;
+            if (s_loggedMissingFonts.find(font.family) == s_loggedMissingFonts.end()) {
+                s_loggedMissingFonts.insert(font.family);
+                LOG_ERROR("DrawText: FontAtlas is NULL for family='{}' size={} (base={}). Text='{}' will use fallback.",
+                    font.family, roundedSize, kSdfBaseFontSizePx, text.substr(0, 30));
+            }
         }
     }
     
     if (fontAtlas) {
         // Render using font atlas (Dota 2 style)
         const float letterSpacing = std::max(0.0f, font.letterSpacing);
+
+        // Minimal UTF-8 decoder: returns next Unicode codepoint and advances index.
+        // Invalid sequences yield U+FFFD and advance by 1 byte.
+        auto nextCodepoint = [](const std::string& s, size_t& i) -> uint32_t {
+            const size_t n = s.size();
+            if (i >= n) return 0;
+            const uint8_t c0 = static_cast<uint8_t>(s[i]);
+            if (c0 < 0x80) {
+                i += 1;
+                return c0;
+            }
+            // 2-byte
+            if ((c0 & 0xE0) == 0xC0 && i + 1 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                if ((c1 & 0xC0) == 0x80) {
+                    i += 2;
+                    return ((c0 & 0x1F) << 6) | (c1 & 0x3F);
+                }
+            }
+            // 3-byte
+            if ((c0 & 0xF0) == 0xE0 && i + 2 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+                if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80)) {
+                    i += 3;
+                    return ((c0 & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F);
+                }
+            }
+            // 4-byte
+            if ((c0 & 0xF8) == 0xF0 && i + 3 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+                const uint8_t c3 = static_cast<uint8_t>(s[i + 3]);
+                if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80) && ((c3 & 0xC0) == 0x80)) {
+                    i += 4;
+                    return ((c0 & 0x07) << 18) | ((c1 & 0x3F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+                }
+            }
+            i += 1;
+            return 0xFFFD;
+        };
         
         // Measure text with basic multiline + letter spacing.
         auto measureWithSpacing = [&](const std::string& s) -> Vector2D {
             float maxWidth = 0.0f;
             float lineWidth = 0.0f;
-            float height = fontAtlas->GetLineHeight();
+            float height = fontAtlas->GetLineHeight() * geomScale;
             bool firstInLine = true;
             
             // Use space glyph for tabs/unknown spacing
             const FontGlyph* spaceGlyph = fontAtlas->GetGlyph((uint32_t)' ');
-            const float spaceAdvance = spaceGlyph ? spaceGlyph->advance : (fontAtlas->GetFontSize() * 0.5f);
+            const float spaceAdvanceBase = spaceGlyph ? spaceGlyph->advance : (fontAtlas->GetFontSize() * 0.5f);
+            const float spaceAdvance = spaceAdvanceBase * geomScale;
             
-            for (char ch : s) {
-                if (ch == '\r') continue;
-                if (ch == '\n') {
+            size_t i = 0;
+            while (i < s.size()) {
+                const uint32_t cp = nextCodepoint(s, i);
+                if (cp == '\r') continue;
+                if (cp == '\n') {
                     maxWidth = std::max(maxWidth, lineWidth);
                     lineWidth = 0.0f;
-                    height += fontAtlas->GetLineHeight();
+                    height += fontAtlas->GetLineHeight() * geomScale;
                     firstInLine = true;
                     continue;
                 }
@@ -525,19 +634,18 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
                 if (!firstInLine) lineWidth += letterSpacing;
                 firstInLine = false;
                 
-                if (ch == '\t') {
+                if (cp == '\t') {
                     lineWidth += spaceAdvance * 4.0f;
                     continue;
                 }
                 
-                const uint32_t codepoint = static_cast<uint32_t>(static_cast<unsigned char>(ch));
-                const FontGlyph* g = fontAtlas->GetGlyph(codepoint);
+                const FontGlyph* g = fontAtlas->GetGlyph(cp);
                 if (g) {
                     // stb_truetype advance can be smaller than the bitmap box for some fonts/sizes,
                     // which makes text look "crushed" due to overlap. Enforce a minimum advance
                     // that fits the glyph's drawn box (offsetX + width).
-                    const float minAdvance = std::max(0.0f, g->offsetX + g->width);
-                    lineWidth += std::max(g->advance, minAdvance);
+                    const float minAdvance = std::max(0.0f, (g->offsetX + g->width) * geomScale);
+                    lineWidth += std::max(g->advance * geomScale, minAdvance);
                 } else {
                     lineWidth += spaceAdvance;
                 }
@@ -578,19 +686,21 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
         // Render each character as a textured quad (supports basic multiline via '\n')
         const float baseX = textX;
         float cursorX = textX;
-        const float lineStep = fontAtlas->GetLineHeight();
+        const float lineStep = fontAtlas->GetLineHeight() * geomScale;
 
         // Snap ONLY the baseline per line. Rounding each glyph Y individually looks worse
         // because glyph offsetY differs slightly per character (causes 1px jitter).
-        const float baseLineY0 = std::round(textY + fontAtlas->GetAscent());
+        const float baseLineY0 = std::round(textY + fontAtlas->GetAscent() * geomScale);
         int lineIndex = 0;
         float baselineY = baseLineY0;
 
         bool firstInLine = true;
-        
-        for (char c : text) {
-            if (c == '\r') continue;
-            if (c == '\n') {
+        static bool s_loggedFirstGlyph = false;
+        size_t ti = 0;
+        while (ti < text.size()) {
+            const uint32_t cp = nextCodepoint(text, ti);
+            if (cp == '\r') continue;
+            if (cp == '\n') {
                 cursorX = baseX;
                 lineIndex++;
                 baselineY = std::round(baseLineY0 + (float)lineIndex * lineStep);
@@ -601,29 +711,46 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
             if (!firstInLine) cursorX += letterSpacing;
             firstInLine = false;
             
-            const uint32_t codepoint = static_cast<uint32_t>(static_cast<unsigned char>(c));
-            const FontGlyph* glyph = fontAtlas->GetGlyph(codepoint);
-            if (!glyph) continue;
+            const FontGlyph* glyph = fontAtlas->GetGlyph(cp);
             
-            if (c == ' ') {
-                cursorX += glyph->advance;
+            if (cp == ' ') {
+                const FontGlyph* sg = glyph ? glyph : fontAtlas->GetGlyph((uint32_t)' ');
+                cursorX += sg ? (sg->advance * geomScale) : (fontAtlas->GetFontSize() * 0.5f * geomScale);
                 continue;
             }
-            if (c == '\t') {
+            if (cp == '\t') {
                 // Simple tab = 4 spaces.
-                cursorX += glyph->advance * 4.0f;
+                const FontGlyph* sg = fontAtlas->GetGlyph((uint32_t)' ');
+                const float adv = sg ? (sg->advance * geomScale) : (fontAtlas->GetFontSize() * 0.5f * geomScale);
+                cursorX += adv * 4.0f;
                 continue;
+            }
+
+            if (!glyph) {
+                // Unknown glyph: advance by space width so layout doesn't collapse.
+                const FontGlyph* sg = fontAtlas->GetGlyph((uint32_t)' ');
+                cursorX += sg ? (sg->advance * geomScale) : (fontAtlas->GetFontSize() * 0.5f * geomScale);
+                continue;
+            }
+
+            if (!s_loggedFirstGlyph) {
+                s_loggedFirstGlyph = true;
+                LOG_INFO("DrawText first glyph: cp=U+{:04X} w={} h={} u0={:.4f} v0={:.4f} u1={:.4f} v1={:.4f} bounds=({:.1f},{:.1f},{:.1f},{:.1f})",
+                    (uint32_t)cp,
+                    glyph->width, glyph->height,
+                    glyph->u0, glyph->v0, glyph->u1, glyph->v1,
+                    bounds.x, bounds.y, bounds.width, bounds.height);
             }
             
             // Calculate glyph position (keep per-glyph Y fractional to avoid jitter).
-            float glyphX = cursorX + glyph->offsetX;
-            float glyphY = baselineY + glyph->offsetY;
+            float glyphX = cursorX + glyph->offsetX * geomScale;
+            float glyphY = baselineY + glyph->offsetY * geomScale;
             
             // Add textured quad for this glyph
             auto p0 = TransformPoint(glyphX, glyphY);
-            auto p1 = TransformPoint(glyphX + glyph->width, glyphY);
-            auto p2 = TransformPoint(glyphX + glyph->width, glyphY + glyph->height);
-            auto p3 = TransformPoint(glyphX, glyphY + glyph->height);
+            auto p1 = TransformPoint(glyphX + glyph->width * geomScale, glyphY);
+            auto p2 = TransformPoint(glyphX + glyph->width * geomScale, glyphY + glyph->height * geomScale);
+            auto p3 = TransformPoint(glyphX, glyphY + glyph->height * geomScale);
             
             UIVertex v[6];
             v[0] = { p0.x, p0.y, glyph->u0, glyph->v0, color.r, color.g, color.b, color.a };
@@ -639,8 +766,8 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
             
             {
                 // See note in measureWithSpacing(): avoid overlaps.
-                const float minAdvance = std::max(0.0f, glyph->offsetX + glyph->width);
-                cursorX += std::max(glyph->advance, minAdvance);
+                const float minAdvance = std::max(0.0f, (glyph->offsetX + glyph->width) * geomScale);
+                cursorX += std::max(glyph->advance * geomScale, minAdvance);
             }
         }
         
@@ -825,8 +952,13 @@ void CUIRenderer::ClearTextureCache() {
 // ============ DX12 Resource Creation ============
 
 bool CUIRenderer::CreateRootSignature() {
-    // Root parameters: b0 (screen constants), b1 (transform constants), t0 (texture), s0 (sampler)
-    D3D12_ROOT_PARAMETER rootParams[3] = {};
+    // Root parameters:
+    //  - b0: ScreenConstants
+    //  - b1: OpacityConstants
+    //  - b2: SdfConstants (text only)
+    //  - t0: Texture SRV (font atlas)
+    //  - s0: static sampler
+    D3D12_ROOT_PARAMETER rootParams[4] = {};
     
     // b0: Screen constants
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -842,6 +974,13 @@ bool CUIRenderer::CreateRootSignature() {
     rootParams[1].Constants.Num32BitValues = 1; // float opacity
     rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     
+    // b2: SDF constants (used by the text PS)
+    rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParams[2].Constants.ShaderRegister = 2;
+    rootParams[2].Constants.RegisterSpace = 0;
+    rootParams[2].Constants.Num32BitValues = 2; // float sdfScale + float debugMode
+    rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     // t0: Texture (descriptor table)
     D3D12_DESCRIPTOR_RANGE descRange = {};
     descRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -850,13 +989,15 @@ bool CUIRenderer::CreateRootSignature() {
     descRange.RegisterSpace = 0;
     descRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     
-    rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    rootParams[2].DescriptorTable.NumDescriptorRanges = 1;
-    rootParams[2].DescriptorTable.pDescriptorRanges = &descRange;
-    rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootParams[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[3].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[3].DescriptorTable.pDescriptorRanges = &descRange;
+    rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     
     // Static sampler
     D3D12_STATIC_SAMPLER_DESC sampler = {};
+    // Font atlas is a single-channel SDF field (R8). Linear filtering is required for proper SDF
+    // reconstruction (smoothstep around the 0.5 edge). Point sampling produces jagged edges.
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -872,7 +1013,7 @@ bool CUIRenderer::CreateRootSignature() {
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     
     D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-    rootSigDesc.NumParameters = 3;
+    rootSigDesc.NumParameters = 4;
     rootSigDesc.pParameters = rootParams;
     rootSigDesc.NumStaticSamplers = 1;
     rootSigDesc.pStaticSamplers = &sampler;
@@ -903,6 +1044,12 @@ bool CUIRenderer::CompileShaders() {
         cbuffer OpacityConstants : register(b1) {
             float opacity;
             float3 padding2;
+        };
+        
+        cbuffer SdfConstants : register(b2) {
+            float sdfScale;      // fontSize / SDF_BASE_SIZE
+            float debugMode;     // see kSdfDebugMode
+            float2 padding3;
         };
         
         struct VSInput {
@@ -936,7 +1083,19 @@ bool CUIRenderer::CompileShaders() {
         SamplerState fontSampler : register(s0);
         
         float4 PSMainTextured(PSInput input) : SV_TARGET {
-            float alpha = fontTexture.Sample(fontSampler, input.uv).r;
+            // Single-channel SDF atlas in R8_UNORM (0.5 ~= edge).
+            // Scale fwidth by sdfScale so smoothing remains correct when glyph geometry is scaled.
+            float dist = fontTexture.Sample(fontSampler, input.uv).r;
+
+            if (debugMode > 1.5) {
+                return float4(1.0, 0.0, 1.0, 1.0);
+            }
+            if (debugMode > 0.5) {
+                return float4(dist, dist, dist, 1.0);
+            }
+
+            float w = max(fwidth(dist) * sdfScale, 0.0005);
+            float alpha = smoothstep(0.5 - w, 0.5 + w, dist);
             return float4(input.color.rgb, input.color.a * alpha * opacity);
         }
     )";
@@ -1046,7 +1205,10 @@ bool CUIRenderer::CreatePipelineState() {
 
 bool CUIRenderer::CreateBuffers() {
     // Create per-frame dynamic vertex buffers to avoid GPU/CPU sync issues
-    const UINT vertexBufferSize = sizeof(UIVertex) * 20000; // Max 20k vertices per frame
+    // UI can generate a lot of vertices, especially for text (6 verts per glyph).
+    // Also, we may flush text multiple times per frame when different font sizes are used.
+    // Give generous headroom to avoid dropping text.
+    const UINT vertexBufferSize = sizeof(UIVertex) * 120000; // Max 120k vertices per frame
     
     D3D12_HEAP_PROPERTIES uploadHeapProps = {};
     uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;

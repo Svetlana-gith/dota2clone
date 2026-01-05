@@ -3,6 +3,9 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <unordered_set>
+#include <filesystem>
 
 namespace Panorama {
 
@@ -112,42 +115,74 @@ void StyleProperties::Reset() {
 i32 StyleSelector::GetSpecificity() const {
     // CSS specificity: (id, class, element)
     i32 spec = 0;
-    if (!id.empty()) spec += 100;
-    spec += static_cast<i32>(classes.size()) * 10;
-    if (!element.empty()) spec += 1;
-    if (!pseudoClass.empty()) spec += 10;
+    for (const auto& step : steps) {
+        const auto& c = step.compound;
+        if (!c.id.empty()) spec += 100;
+        spec += static_cast<i32>(c.classes.size()) * 10;
+        if (!c.element.empty()) spec += 1;
+        if (!c.pseudoClass.empty()) spec += 10;
+    }
     return spec;
+}
+
+static bool MatchesCompound(const SelectorCompound& compound, const CPanel2D* panel) {
+    if (!panel) return false;
+
+    // Element type
+    if (!compound.element.empty() && panel->GetPanelTypeName() != compound.element) return false;
+
+    // ID
+    if (!compound.id.empty() && panel->GetID() != compound.id) return false;
+
+    // Classes
+    for (const auto& cls : compound.classes) {
+        if (!panel->HasClass(cls)) return false;
+    }
+
+    // Pseudo-class
+    if (!compound.pseudoClass.empty()) {
+        const std::string& pc = compound.pseudoClass;
+        if (pc == "hover" && !panel->IsHovered()) return false;
+        if (pc == "active" && !panel->IsPressed()) return false;
+        if (pc == "focus" && !panel->IsFocused()) return false;
+        if (pc == "disabled" && panel->IsEnabled()) return false;
+        if (pc == "selected" && !panel->IsSelected()) return false;
+    }
+
+    return true;
 }
 
 bool StyleSelector::Matches(const CPanel2D* panel) const {
     if (!panel) return false;
-    
-    // Check element type
-    if (!element.empty() && panel->GetPanelTypeName() != element) {
-        return false;
-    }
-    
-    // Check ID
-    if (!id.empty() && panel->GetID() != id) {
-        return false;
-    }
-    
-    // Check classes
-    for (const auto& cls : classes) {
-        if (!panel->HasClass(cls)) {
-            return false;
+    if (steps.empty()) return false;
+
+    // Match from rightmost to leftmost across ancestors/parent chain
+    const CPanel2D* current = panel;
+    if (!MatchesCompound(steps[0].compound, current)) return false;
+
+    for (size_t i = 1; i < steps.size(); ++i) {
+        const auto comb = steps[i - 1].combinatorToPrev;
+        const auto& target = steps[i].compound;
+
+        if (comb == SelectorCombinator::Child) {
+            current = current ? current->GetParent() : nullptr;
+            if (!MatchesCompound(target, current)) return false;
+        } else {
+            // Default/Descendant: walk up until a match
+            const CPanel2D* p = current ? current->GetParent() : nullptr;
+            bool found = false;
+            while (p) {
+                if (MatchesCompound(target, p)) {
+                    found = true;
+                    current = p;
+                    break;
+                }
+                p = p->GetParent();
+            }
+            if (!found) return false;
         }
     }
-    
-    // Check pseudo-class
-    if (!pseudoClass.empty()) {
-        if (pseudoClass == "hover" && !panel->IsHovered()) return false;
-        if (pseudoClass == "active" && !panel->IsPressed()) return false;
-        if (pseudoClass == "focus" && !panel->IsFocused()) return false;
-        if (pseudoClass == "disabled" && panel->IsEnabled()) return false;
-        if (pseudoClass == "selected" && !panel->IsSelected()) return false;
-    }
-    
+
     return true;
 }
 
@@ -215,22 +250,184 @@ bool CStyleSheet::Parse(const std::string& css) {
         }
         
         std::string blockStr = css.substr(blockStart, pos - blockStart - 1);
-        
-        // Parse and add rule
-        StyleRule rule;
-        rule.selector = ParseSelector(selectorStr);
-        rule.properties = ParseProperties(blockStr);
-        rule.sourceOrder = m_ruleCounter++;
-        m_rules.push_back(rule);
+
+        // Parse properties once, then create one rule per selector in selector list (split by ',')
+        StyleProperties props = ParseProperties(blockStr);
+
+        size_t sPos = 0;
+        while (sPos < selectorStr.size()) {
+            size_t comma = selectorStr.find(',', sPos);
+            std::string one = (comma == std::string::npos)
+                ? selectorStr.substr(sPos)
+                : selectorStr.substr(sPos, comma - sPos);
+
+            // Skip empty selectors
+            auto trimCopy = [](std::string t) {
+                size_t a = t.find_first_not_of(" \t\n\r");
+                size_t b = t.find_last_not_of(" \t\n\r");
+                if (a == std::string::npos) return std::string{};
+                return t.substr(a, b - a + 1);
+            };
+            one = trimCopy(one);
+            if (!one.empty()) {
+                StyleRule rule;
+                rule.selector = ParseSelector(one);
+                rule.properties = props;
+                rule.sourceOrder = m_ruleCounter++;
+                m_rules.push_back(rule);
+            }
+
+            if (comma == std::string::npos) break;
+            sPos = comma + 1;
+        }
     }
     
     return true;
 }
 
+static std::string NormalizePathForKey(const std::filesystem::path& p) {
+    std::error_code ec;
+    auto abs = std::filesystem::absolute(p, ec);
+    if (!ec) return abs.lexically_normal().u8string();
+    return p.lexically_normal().u8string();
+}
+
+static std::filesystem::path ResolveResourcePath(const std::string& rawPath) {
+    // Supports Valve-like: file://{resources}/styles/foo.css
+    // We map {resources} to workspace "resources/" folder.
+    const std::string prefix = "file://{resources}/";
+    if (rawPath.rfind(prefix, 0) == 0) {
+        std::string rest = rawPath.substr(prefix.size());
+        // Keep it as a normal relative path so it can be resolved by the search logic below.
+        return std::filesystem::path("resources") / std::filesystem::path(rest);
+    }
+
+    // If it's already an absolute path, keep it.
+    std::filesystem::path p(rawPath);
+    if (p.is_absolute()) return p;
+
+    // Best-effort resolution for runtime builds:
+    // The executable may run with cwd like ".../build/bin/Debug", while the assets live in:
+    //   - "<repo>/resources/..."
+    //   - "<repo>/build/resources/..." (copied)
+    // So we search upward from cwd for a directory where (base / p) exists.
+    std::error_code ec;
+    std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (ec) {
+        return p; // fallback
+    }
+
+    std::filesystem::path base = cwd;
+    for (int depth = 0; depth <= 8; ++depth) {
+        std::filesystem::path candidate = base / p;
+        if (std::filesystem::exists(candidate, ec) && !ec) {
+            return candidate;
+        }
+        std::filesystem::path parent = base.parent_path();
+        if (parent == base) break;
+        base = parent;
+    }
+
+    // Default: keep it relative (open will fail and logs will show cwd + requested path).
+    return p;
+}
+
 bool CStyleSheet::LoadFromFile(const std::string& path) {
-    // Would load file and call Parse()
-    // For now, return false
-    return false;
+    // Load CSS file (with minimal @import support) and Parse().
+    // Logging here is intentionally verbose: it helps diagnose working-directory/resource-path issues.
+    LOG_INFO("CStyleSheet::LoadFromFile request='{}' cwd='{}'",
+        path, std::filesystem::current_path().u8string());
+
+    Clear();
+    std::unordered_set<std::string> visited;
+
+    std::function<bool(const std::filesystem::path&)> loadInternal = [&](const std::filesystem::path& p) -> bool {
+        std::filesystem::path resolved = ResolveResourcePath(p.u8string());
+        const std::string key = NormalizePathForKey(resolved);
+        if (visited.count(key)) {
+            LOG_WARN("CStyleSheet::LoadFromFile skipping already-visited css='{}' (resolved='{}')",
+                p.u8string(), resolved.u8string());
+            return true; // avoid cycles
+        }
+        visited.insert(key);
+
+        LOG_INFO("CStyleSheet::LoadFromFile opening css='{}' resolved='{}'",
+            p.u8string(), resolved.u8string());
+
+        std::ifstream file(resolved);
+        if (!file.is_open()) {
+            LOG_WARN("CStyleSheet::LoadFromFile failed to open resolved='{}' (cwd='{}')",
+                resolved.u8string(), std::filesystem::current_path().u8string());
+            return false;
+        }
+
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string css = buffer.str();
+
+        // Handle simple @import statements (best-effort).
+        // Supported forms:
+        //   @import "path.css";
+        //   @import url("path.css");
+        // We resolve imports relative to current file directory.
+        const std::filesystem::path baseDir = resolved.parent_path();
+        size_t ipos = 0;
+        while (true) {
+            ipos = css.find("@import", ipos);
+            if (ipos == std::string::npos) break;
+
+            size_t semi = css.find(';', ipos);
+            if (semi == std::string::npos) break;
+
+            std::string stmt = css.substr(ipos, semi - ipos + 1);
+            std::string target;
+
+            auto extractQuoted = [&](const std::string& s) -> std::string {
+                size_t q1 = s.find('"');
+                char q = '"';
+                if (q1 == std::string::npos) { q1 = s.find('\''); q = '\''; }
+                if (q1 == std::string::npos) return {};
+                size_t q2 = s.find(q, q1 + 1);
+                if (q2 == std::string::npos) return {};
+                return s.substr(q1 + 1, q2 - q1 - 1);
+            };
+
+            target = extractQuoted(stmt);
+            if (!target.empty()) {
+                std::filesystem::path impPath = ResolveResourcePath(target);
+                if (!impPath.is_absolute()) impPath = baseDir / impPath;
+                bool okImp = loadInternal(impPath);
+                if (!okImp) {
+                    LOG_WARN("CStyleSheet::LoadFromFile @import failed target='{}' from='{}' -> resolved='{}'",
+                        target, resolved.u8string(), impPath.u8string());
+                } else {
+                    LOG_INFO("CStyleSheet::LoadFromFile @import ok target='{}' from='{}' -> resolved='{}'",
+                        target, resolved.u8string(), impPath.u8string());
+                }
+            } else {
+                LOG_WARN("CStyleSheet::LoadFromFile malformed @import stmt='{}' (in '{}')",
+                    stmt, resolved.u8string());
+            }
+
+            // Remove @import from css so Parse() doesn't choke on it later.
+            css.erase(ipos, semi - ipos + 1);
+        }
+
+        bool okParse = Parse(css);
+        if (!okParse) {
+            LOG_WARN("CStyleSheet::LoadFromFile Parse() failed for resolved='{}'", resolved.u8string());
+            return false;
+        }
+
+        LOG_INFO("CStyleSheet::LoadFromFile parsed resolved='{}' (rules={}, animations={})",
+            resolved.u8string(), (int)m_rules.size(), (int)m_animations.size());
+        return true;
+    };
+
+    bool ok = loadInternal(std::filesystem::path(path));
+    LOG_INFO("CStyleSheet::LoadFromFile done request='{}' -> {} (total rules={}, animations={})",
+        path, ok ? "OK" : "FAILED", (int)m_rules.size(), (int)m_animations.size());
+    return ok;
 }
 
 StyleProperties CStyleSheet::ComputeStyle(const CPanel2D* panel) const {
@@ -284,72 +481,119 @@ const AnimationDef* CStyleSheet::GetAnimation(const std::string& name) const {
 
 StyleSelector CStyleSheet::ParseSelector(const std::string& selectorStr) {
     StyleSelector sel;
-    std::string s = selectorStr;
-    
-    // Trim whitespace
-    size_t start = s.find_first_not_of(" \t\n\r");
-    size_t end = s.find_last_not_of(" \t\n\r");
-    if (start != std::string::npos) {
-        s = s.substr(start, end - start + 1);
-    }
-    
-    size_t pos = 0;
-    
-    // Parse element type (if starts with letter)
-    if (pos < s.length() && std::isalpha(s[pos])) {
-        size_t elemEnd = pos;
-        while (elemEnd < s.length() && (std::isalnum(s[elemEnd]) || s[elemEnd] == '-' || s[elemEnd] == '_')) {
-            elemEnd++;
+
+    auto trimCopy = [](std::string t) {
+        size_t a = t.find_first_not_of(" \t\n\r");
+        size_t b = t.find_last_not_of(" \t\n\r");
+        if (a == std::string::npos) return std::string{};
+        return t.substr(a, b - a + 1);
+    };
+
+    std::string s = trimCopy(selectorStr);
+    if (s.empty()) return sel;
+
+    auto isSelectorStart = [](char c) {
+        return std::isalpha((unsigned char)c) || c == '.' || c == '#' || c == ':';
+    };
+
+    auto parseCompound = [&](size_t& pos) -> SelectorCompound {
+        SelectorCompound out;
+
+        // element
+        if (pos < s.size() && std::isalpha((unsigned char)s[pos])) {
+            size_t elemEnd = pos;
+            while (elemEnd < s.size() && (std::isalnum((unsigned char)s[elemEnd]) || s[elemEnd] == '-' || s[elemEnd] == '_')) {
+                elemEnd++;
+            }
+            out.element = s.substr(pos, elemEnd - pos);
+            pos = elemEnd;
         }
-        sel.element = s.substr(pos, elemEnd - pos);
-        pos = elemEnd;
-    }
-    
-    // Parse ID, classes, pseudo-classes
-    while (pos < s.length()) {
-        if (s[pos] == '#') {
-            // ID
-            pos++;
-            size_t idEnd = pos;
-            while (idEnd < s.length() && (std::isalnum(s[idEnd]) || s[idEnd] == '-' || s[idEnd] == '_')) {
-                idEnd++;
-            }
-            sel.id = s.substr(pos, idEnd - pos);
-            pos = idEnd;
-        } else if (s[pos] == '.') {
-            // Class
-            pos++;
-            size_t classEnd = pos;
-            while (classEnd < s.length() && (std::isalnum(s[classEnd]) || s[classEnd] == '-' || s[classEnd] == '_')) {
-                classEnd++;
-            }
-            sel.classes.push_back(s.substr(pos, classEnd - pos));
-            pos = classEnd;
-        } else if (s[pos] == ':') {
-            // Pseudo-class
-            pos++;
-            if (pos < s.length() && s[pos] == ':') {
-                // Pseudo-element (::before, ::after)
+
+        while (pos < s.size()) {
+            if (s[pos] == '#') {
                 pos++;
-                size_t pseudoEnd = pos;
-                while (pseudoEnd < s.length() && std::isalpha(s[pseudoEnd])) {
-                    pseudoEnd++;
+                size_t idEnd = pos;
+                while (idEnd < s.size() && (std::isalnum((unsigned char)s[idEnd]) || s[idEnd] == '-' || s[idEnd] == '_')) idEnd++;
+                out.id = s.substr(pos, idEnd - pos);
+                pos = idEnd;
+            } else if (s[pos] == '.') {
+                pos++;
+                size_t classEnd = pos;
+                while (classEnd < s.size() && (std::isalnum((unsigned char)s[classEnd]) || s[classEnd] == '-' || s[classEnd] == '_')) classEnd++;
+                out.classes.push_back(s.substr(pos, classEnd - pos));
+                pos = classEnd;
+            } else if (s[pos] == ':') {
+                pos++;
+                if (pos < s.size() && s[pos] == ':') {
+                    // pseudo-element
+                    pos++;
+                    size_t pseudoEnd = pos;
+                    while (pseudoEnd < s.size() && std::isalpha((unsigned char)s[pseudoEnd])) pseudoEnd++;
+                    sel.pseudoElement = s.substr(pos, pseudoEnd - pos);
+                    pos = pseudoEnd;
+                } else {
+                    size_t pseudoEnd = pos;
+                    while (pseudoEnd < s.size() && std::isalpha((unsigned char)s[pseudoEnd])) pseudoEnd++;
+                    out.pseudoClass = s.substr(pos, pseudoEnd - pos);
+                    pos = pseudoEnd;
                 }
-                sel.pseudoElement = s.substr(pos, pseudoEnd - pos);
-                pos = pseudoEnd;
             } else {
-                size_t pseudoEnd = pos;
-                while (pseudoEnd < s.length() && std::isalpha(s[pseudoEnd])) {
-                    pseudoEnd++;
-                }
-                sel.pseudoClass = s.substr(pos, pseudoEnd - pos);
-                pos = pseudoEnd;
+                break;
             }
-        } else {
-            pos++;
         }
+
+        return out;
+    };
+
+    std::vector<SelectorCompound> compounds;
+    std::vector<SelectorCombinator> combinators; // index i: relation from compounds[i-1] to compounds[i]
+    combinators.push_back(SelectorCombinator::None);
+
+    size_t pos = 0;
+    while (pos < s.size()) {
+        // skip whitespace
+        bool hadSpace = false;
+        while (pos < s.size() && std::isspace((unsigned char)s[pos])) { hadSpace = true; pos++; }
+        if (pos >= s.size()) break;
+
+        // Combinator explicit
+        if (s[pos] == '>') {
+            // Explicit child combinator - affects next compound
+            pos++;
+            while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+            // Mark that next relation is child
+            if (!combinators.empty()) {
+                combinators.back() = SelectorCombinator::Child;
+            }
+            continue;
+        }
+
+        if (!isSelectorStart(s[pos])) { pos++; continue; }
+
+        // For implicit descendant combinator (whitespace), set relation for this compound (except first)
+        if (!compounds.empty()) {
+            if (combinators.back() == SelectorCombinator::None && hadSpace) {
+                combinators.back() = SelectorCombinator::Descendant;
+            }
+        }
+
+        SelectorCompound c = parseCompound(pos);
+        compounds.push_back(std::move(c));
+        combinators.push_back(SelectorCombinator::None);
     }
-    
+
+    if (compounds.empty()) return sel;
+
+    // Build right-to-left steps.
+    sel.steps.clear();
+    for (int i = (int)compounds.size() - 1; i >= 0; --i) {
+        SelectorStep st;
+        st.compound = compounds[(size_t)i];
+        // relation from prev (i-1) to i is combinators[i]
+        st.combinatorToPrev = (i > 0) ? combinators[(size_t)i] : SelectorCombinator::None;
+        sel.steps.push_back(std::move(st));
+    }
+
     return sel;
 }
 
@@ -384,6 +628,17 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
         // Convert to lowercase for comparison
         std::transform(propName.begin(), propName.end(), propName.begin(), ::tolower);
         
+        auto parseLengthList = [&](const std::string& v) -> std::vector<Length> {
+            // Split by whitespace
+            std::istringstream iss(v);
+            std::vector<Length> out;
+            std::string tok;
+            while (iss >> tok) {
+                out.push_back(ParseLength(tok));
+            }
+            return out;
+        };
+
         // Parse property
         if (propName == "width") {
             props.width = ParseLength(propValue);
@@ -397,6 +652,10 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
             props.fontSize = ParseLength(propValue).value;
         } else if (propName == "font-family") {
             props.fontFamily = propValue;
+        } else if (propName == "font-weight") {
+            props.fontWeight = propValue;
+        } else if (propName == "font-style") {
+            props.fontStyle = propValue;
         } else if (propName == "letter-spacing") {
             props.letterSpacing = ParseLength(propValue).value;
         } else if (propName == "line-height") {
@@ -410,8 +669,23 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
         } else if (propName == "opacity") {
             props.opacity = std::stof(propValue);
         } else if (propName == "margin") {
-            Length m = ParseLength(propValue);
-            props.marginLeft = props.marginRight = props.marginTop = props.marginBottom = m;
+            // CSS shorthand: 1-4 values
+            auto vals = parseLengthList(propValue);
+            if (vals.size() == 1) {
+                props.marginTop = props.marginRight = props.marginBottom = props.marginLeft = vals[0];
+            } else if (vals.size() == 2) {
+                props.marginTop = props.marginBottom = vals[0];
+                props.marginLeft = props.marginRight = vals[1];
+            } else if (vals.size() == 3) {
+                props.marginTop = vals[0];
+                props.marginLeft = props.marginRight = vals[1];
+                props.marginBottom = vals[2];
+            } else if (vals.size() >= 4) {
+                props.marginTop = vals[0];
+                props.marginRight = vals[1];
+                props.marginBottom = vals[2];
+                props.marginLeft = vals[3];
+            }
         } else if (propName == "margin-left") {
             props.marginLeft = ParseLength(propValue);
         } else if (propName == "margin-right") {
@@ -421,8 +695,22 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
         } else if (propName == "margin-bottom") {
             props.marginBottom = ParseLength(propValue);
         } else if (propName == "padding") {
-            Length p = ParseLength(propValue);
-            props.paddingLeft = props.paddingRight = props.paddingTop = props.paddingBottom = p;
+            auto vals = parseLengthList(propValue);
+            if (vals.size() == 1) {
+                props.paddingTop = props.paddingRight = props.paddingBottom = props.paddingLeft = vals[0];
+            } else if (vals.size() == 2) {
+                props.paddingTop = props.paddingBottom = vals[0];
+                props.paddingLeft = props.paddingRight = vals[1];
+            } else if (vals.size() == 3) {
+                props.paddingTop = vals[0];
+                props.paddingLeft = props.paddingRight = vals[1];
+                props.paddingBottom = vals[2];
+            } else if (vals.size() >= 4) {
+                props.paddingTop = vals[0];
+                props.paddingRight = vals[1];
+                props.paddingBottom = vals[2];
+                props.paddingLeft = vals[3];
+            }
         } else if (propName == "flow-children") {
             if (propValue == "down") props.flowChildren = FlowDirection::Down;
             else if (propValue == "right") props.flowChildren = FlowDirection::Right;
@@ -436,6 +724,14 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
             if (propValue == "center") props.verticalAlign = VerticalAlign::Center;
             else if (propValue == "bottom") props.verticalAlign = VerticalAlign::Bottom;
             else props.verticalAlign = VerticalAlign::Top;
+        } else if (propName == "text-align") {
+            if (propValue == "center") props.textAlign = HorizontalAlign::Center;
+            else if (propValue == "right") props.textAlign = HorizontalAlign::Right;
+            else props.textAlign = HorizontalAlign::Left;
+        } else if (propName == "vertical-text-align") {
+            if (propValue == "center") props.verticalTextAlign = VerticalAlign::Center;
+            else if (propValue == "bottom") props.verticalTextAlign = VerticalAlign::Bottom;
+            else props.verticalTextAlign = VerticalAlign::Top;
         }
         // Add more property parsing as needed
     }
@@ -557,8 +853,11 @@ CStyleManager::CStyleManager() {
     // Set default style
     m_defaultStyle.opacity = 1.0f;
     m_defaultStyle.visible = true;
-    m_defaultStyle.color = Color::White();
-    m_defaultStyle.fontSize = 24.0f;  // Increased from 16.0f for better readability
+    // Text defaults are intentionally left unset here.
+    // Text rendering code uses sane fallbacks (e.g. 16px, white), and inheritable text
+    // properties can cascade from parent panels when explicitly set.
+    m_defaultStyle.color.reset();
+    m_defaultStyle.fontSize.reset();
 }
 
 void CStyleManager::LoadGlobalStyles(const std::string& path) {

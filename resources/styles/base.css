@@ -1,0 +1,97 @@
+/* Base stylesheet (HTML/CSS-like defaults) */
+
+/* ===== Font Size Scale ===== */
+/*
+ * Typography scale using 1.25 ratio
+ * Optimal range for SDF rendering: 10px - 72px
+ *
+ * Size Classes:
+ *   .text-xs   =  10px    .text-4xl  =  48px
+ *   .text-sm   =  12px    .text-5xl  =  60px
+ *   .text-base =  14px    .text-6xl  =  72px
+ *   .text-lg   =  18px
+ *   .text-xl   =  22px
+ *   .text-2xl  =  28px
+ *   .text-3xl  =  36px
+ *
+ * Semantic Classes:
+ *   .small      =  10px   (fine print)
+ *   .caption    =  12px   (labels, hints)
+ *   .body       =  14px   (default text)
+ *   .subheading =  18px   (subsections)
+ *   .heading    =  22px   (section headings)
+ *   .title      =  28px   (page titles)
+ *   .display    =  36px   (large display text)
+ *   .hero       =  48px   (hero sections)
+ */
+
+/* Global defaults */
+Panel {
+  font-family: Roboto Condensed;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 1.0);
+}
+
+/* ===== Size Scale Classes ===== */
+.text-xs   { font-size: 10px; }
+.text-sm   { font-size: 12px; }
+.text-base { font-size: 14px; }
+.text-lg   { font-size: 18px; }
+.text-xl   { font-size: 22px; }
+.text-2xl  { font-size: 28px; }
+.text-3xl  { font-size: 36px; }
+.text-4xl  { font-size: 48px; }
+.text-5xl  { font-size: 60px; }
+.text-6xl  { font-size: 72px; }
+
+/* ===== Semantic Typography Classes ===== */
+.small      { font-size: 10px; }
+.caption    { font-size: 12px; }
+.body       { font-size: 14px; }
+.subheading { font-size: 18px; }
+.heading    { font-size: 22px; }
+.title      { font-size: 28px; }
+.display    { font-size: 36px; }
+.hero       { font-size: 48px; }
+
+/* ===== Text Defaults ===== */
+Label {
+  /* font-size inherited from parent for proper Button/Panel inheritance */
+  color: rgba(255, 255, 255, 1.0);
+}
+
+TextEntry {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 1.0);
+}
+
+/* ===== Button Styles ===== */
+Button {
+  background-color: rgba(40, 40, 50, 0.90);
+  border-radius: 6px;
+  border-width: 1px;
+  border-color: rgba(102, 102, 115, 0.80);
+  font-size: 14px;
+  color: rgba(230, 235, 245, 1.0);
+}
+
+Button Label {
+  /* font-size inherited from Button parent */
+  color: rgba(230, 235, 245, 1.0);
+}
+
+Button:hover {
+  background-color: rgba(60, 60, 70, 0.95);
+}
+
+Button:active {
+  background-color: rgba(30, 30, 38, 0.95);
+}
+
+Button.btn-sm { font-size: 12px; }
+Button.btn-lg { font-size: 18px; }
+
+/* ===== Utility Classes ===== */
+Label.Muted {
+  color: rgba(140, 140, 140, 1.0);
+}

@@ -10,6 +10,7 @@ constexpr f32 PING_INTERVAL = 1.0f;
 NetworkClient::NetworkClient()
     : state_(ConnectionState::Disconnected)
     , clientId_(INVALID_CLIENT_ID)
+    , accountId_(0)
     , connectionTimeout_(0.0f)
     , pingTimer_(0.0f)
     , lastPingTime_(0.0f)
@@ -49,16 +50,25 @@ bool NetworkClient::connect(const char* serverIP, u16 serverPort) {
     state_ = ConnectionState::Connecting;
     connectionTimeout_ = CONNECTION_TIMEOUT;
     
-    // Send connection request
+    // Send connection request with username and accountId
+    ConnectionRequestPayload payload;
+    memset(&payload, 0, sizeof(payload));
+    strncpy(payload.username, username_.c_str(), sizeof(payload.username) - 1);
+    payload.accountId = accountId_;
+    
     PacketHeader header;
     header.type = PacketType::ConnectionRequest;
     header.sequence = 0;
-    header.payloadSize = 0;
+    header.payloadSize = sizeof(ConnectionRequestPayload);
     
-    socket_.sendTo(&header, PacketHeader::SIZE, serverAddress_);
+    u8 packet[PacketHeader::SIZE + sizeof(ConnectionRequestPayload)];
+    memcpy(packet, &header, PacketHeader::SIZE);
+    memcpy(packet + PacketHeader::SIZE, &payload, sizeof(ConnectionRequestPayload));
+    
+    socket_.sendTo(packet, sizeof(packet), serverAddress_);
     totalPacketsSent_++;
     
-    LOG_INFO("Connection request sent to {}", serverAddress_.toString());
+    LOG_INFO("Connection request sent to {} (username: {}, accountId: {})", serverAddress_.toString(), username_, accountId_);
     return true;
 }
 
@@ -154,6 +164,26 @@ void NetworkClient::handlePacket(const u8* data, size_t size) {
             handleWorldSnapshot(payload, payloadSize);
             break;
             
+        case PacketType::HeroPickBroadcast:
+            handleHeroPickBroadcast(payload, payloadSize);
+            break;
+            
+        case PacketType::AllHeroesPicked:
+            handleAllHeroesPicked(payload, payloadSize);
+            break;
+            
+        case PacketType::HeroPickTimer:
+            handleHeroPickTimer(payload, payloadSize);
+            break;
+            
+        case PacketType::TeamAssignment:
+            handleTeamAssignment(payload, payloadSize);
+            break;
+            
+        case PacketType::PlayerInfo:
+            handlePlayerInfo(payload, payloadSize);
+            break;
+            
         case PacketType::Pong:
             handlePong();
             break;
@@ -233,6 +263,119 @@ void NetworkClient::handlePong() {
     // Calculate RTT
     // rtt_ = currentTime - lastPingTime_;
     // For now, just acknowledge
+}
+
+void NetworkClient::sendHeroPick(const std::string& heroName, u8 teamSlot, bool confirmed) {
+    if (state_ != ConnectionState::Connected) return;
+    
+    HeroPickPayload payload;
+    payload.playerId = clientId_;
+    payload.teamSlot = teamSlot;
+    memset(payload.heroName, 0, sizeof(payload.heroName));
+    strncpy(payload.heroName, heroName.c_str(), sizeof(payload.heroName) - 1);
+    
+    PacketHeader header;
+    header.type = PacketType::HeroPick;
+    header.sequence = nextInputSequence_++;
+    header.payloadSize = sizeof(HeroPickPayload);
+    
+    u8 packet[PacketHeader::SIZE + sizeof(HeroPickPayload)];
+    memcpy(packet, &header, PacketHeader::SIZE);
+    memcpy(packet + PacketHeader::SIZE, &payload, sizeof(HeroPickPayload));
+    
+    socket_.sendTo(packet, sizeof(packet), serverAddress_);
+    totalPacketsSent_++;
+    
+    LOG_INFO("Sent hero pick: {} (slot {})", heroName, teamSlot);
+}
+
+void NetworkClient::handleHeroPickBroadcast(const u8* data, size_t size) {
+    if (size < sizeof(HeroPickBroadcastPayload)) {
+        LOG_WARN("Invalid hero pick broadcast size");
+        return;
+    }
+    
+    HeroPickBroadcastPayload payload;
+    memcpy(&payload, data, sizeof(HeroPickBroadcastPayload));
+    
+    std::string heroName(payload.heroName, strnlen(payload.heroName, sizeof(payload.heroName)));
+    bool confirmed = payload.isConfirmed != 0;
+    
+    LOG_INFO("Hero pick broadcast: player {} picked {} (slot {}, confirmed={})", 
+             payload.playerId, heroName, payload.teamSlot, confirmed);
+    
+    if (onHeroPick_) {
+        onHeroPick_(payload.playerId, heroName, payload.teamSlot, confirmed);
+    }
+}
+
+void NetworkClient::handleAllHeroesPicked(const u8* data, size_t size) {
+    if (size < sizeof(AllHeroesPickedPayload)) {
+        LOG_WARN("Invalid all heroes picked size");
+        return;
+    }
+    
+    AllHeroesPickedPayload payload;
+    memcpy(&payload, data, sizeof(AllHeroesPickedPayload));
+    
+    LOG_INFO("All heroes picked! {} players, starting in {} seconds", 
+             payload.playerCount, payload.gameStartDelay);
+    
+    if (onAllPicked_) {
+        onAllPicked_(payload.playerCount, payload.gameStartDelay);
+    }
+}
+
+void NetworkClient::handleHeroPickTimer(const u8* data, size_t size) {
+    if (size < sizeof(HeroPickTimerPayload)) {
+        LOG_WARN("Invalid hero pick timer size");
+        return;
+    }
+    
+    HeroPickTimerPayload payload;
+    memcpy(&payload, data, sizeof(HeroPickTimerPayload));
+    
+    if (onPickTimer_) {
+        onPickTimer_(payload.timeRemaining, payload.currentPhase);
+    }
+}
+
+void NetworkClient::handleTeamAssignment(const u8* data, size_t size) {
+    if (size < sizeof(TeamAssignmentPayload)) {
+        LOG_WARN("Invalid team assignment size");
+        return;
+    }
+    
+    TeamAssignmentPayload payload;
+    memcpy(&payload, data, sizeof(TeamAssignmentPayload));
+    
+    std::string username(payload.username, strnlen(payload.username, sizeof(payload.username)));
+    
+    LOG_INFO("Team assignment received: slot={}, team={}, username={}", 
+             payload.teamSlot, payload.teamId == 0 ? "Radiant" : "Dire", username);
+    
+    if (onTeamAssignment_) {
+        onTeamAssignment_(payload.teamSlot, payload.teamId, username);
+    }
+}
+
+void NetworkClient::handlePlayerInfo(const u8* data, size_t size) {
+    if (size < sizeof(PlayerInfoPayload)) {
+        LOG_WARN("Invalid player info size");
+        return;
+    }
+    
+    PlayerInfoPayload payload;
+    memcpy(&payload, data, sizeof(PlayerInfoPayload));
+    
+    std::string username(payload.username, strnlen(payload.username, sizeof(payload.username)));
+    
+    LOG_INFO("Player info: id={}, slot={}, username={}", 
+             payload.playerId, payload.teamSlot, username);
+    
+    if (onPlayerInfo_) {
+        onPlayerInfo_(payload.playerId, payload.teamSlot, username);
+    }
 }
 
 } // namespace Network

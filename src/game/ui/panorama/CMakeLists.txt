@@ -15,6 +15,10 @@ add_library(panorama_ui STATIC
     # Layout parser
     CLayoutFile.h
     CLayoutFile.cpp
+
+    # Text system (decoupled from creation)
+    CUITextSystem.h
+    CUITextSystem.cpp
     
     # Event system
     GameEvents.h

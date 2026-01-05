@@ -50,7 +50,19 @@ target_link_libraries(AddTestUser
         spdlog::spdlog
 )
 
+# Add MM Test Users Tool
+add_executable(AddMMTestUsers
+    ${CMAKE_SOURCE_DIR}/scripts/add_mm_test_users.cpp
+)
+
+target_link_libraries(AddMMTestUsers
+    PRIVATE
+        world_editor_auth
+        world_editor_core
+        spdlog::spdlog
+)
+
 # Install targets
-install(TARGETS AuthServer AddTestUser
+install(TARGETS AuthServer AddTestUser AddMMTestUsers
     RUNTIME DESTINATION bin
 )

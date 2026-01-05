@@ -15,7 +15,13 @@ struct MainMenuState::MenuUI {
     std::shared_ptr<Panorama::CPanel2D> bottomBar;
     std::shared_ptr<Panorama::CButton> playButton;
     std::shared_ptr<Panorama::CLabel> serverIPLabel;
+    std::shared_ptr<Panorama::CLabel> usernameLabel;  // Profile username
     std::string serverIP = "127.0.0.1";  // Default to localhost
+    
+    // Top-left buttons (Dota 2 style)
+    std::shared_ptr<Panorama::CButton> returnToGameButton;  // Shows when game in progress
+    std::shared_ptr<Panorama::CButton> settingsButton;      // Settings gear icon
+    std::shared_ptr<Panorama::CPanel2D> settingsPanel;      // Settings overlay
     
     // Matchmaking UI
     std::shared_ptr<Panorama::CPanel2D> searchingOverlay;
@@ -37,6 +43,13 @@ struct MainMenuState::MenuUI {
     std::shared_ptr<Panorama::CLabel> acceptStatusLabel;
     std::shared_ptr<Panorama::CPanel2D> acceptStatusPanel;
     std::vector<std::shared_ptr<Panorama::CPanel2D>> acceptCubes;
+    
+    // Reconnect UI (Dota 2 style)
+    std::shared_ptr<Panorama::CPanel2D> reconnectOverlay;
+    std::shared_ptr<Panorama::CLabel> reconnectLabel;
+    std::shared_ptr<Panorama::CLabel> reconnectInfoLabel;
+    std::shared_ptr<Panorama::CButton> reconnectButton;
+    std::shared_ptr<Panorama::CButton> abandonButton;
 };
 
 MainMenuState::MainMenuState() : m_ui(std::make_unique<MenuUI>()) {}
@@ -44,15 +57,24 @@ MainMenuState::~MainMenuState() = default;
 
 void MainMenuState::OnEnter() { 
     LOG_INFO("MainMenuState::OnEnter()");
+    // Load layered menu stylesheet from disk (no recompilation needed for tweaks).
+    // main_menu.css should @import base.css to keep shared defaults.
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/main_menu.css");
     CreateUI(); 
     LOG_INFO("MainMenuState UI created");
     ConsoleLog("Main Menu loaded");
+    
+    // Check for active game to reconnect
+    CheckForActiveGame();
 }
-void MainMenuState::OnExit() { DestroyUI(); }
+void MainMenuState::OnExit() {
+    // Restore base stylesheet for other screens unless they load their own.
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/base.css");
+    DestroyUI();
+}
 
 // Scaled helpers
 static float S(float v) { return v * 1.35f; } // Scale factor (35% increase) for layout
-static float F(float v) { return v * 1.0f; } // Font scale (100% - readable size)
 
 static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, float h, Panorama::Color bg) {
     auto p = std::make_shared<Panorama::CPanel2D>(id);
@@ -64,9 +86,10 @@ static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, flo
     return p;
 }
 
-static std::shared_ptr<Panorama::CLabel> L(const std::string& text, float size, Panorama::Color col) {
+// Label helper using CSS classes from base.css
+static std::shared_ptr<Panorama::CLabel> L(const std::string& text, const std::string& cssClass, Panorama::Color col) {
     auto l = std::make_shared<Panorama::CLabel>(text, text);
-    l->GetStyle().fontSize = F(size);  // Use F() instead of S() for fonts
+    l->AddClass(cssClass);  // Use CSS class for font size
     l->GetStyle().color = col;
     return l;
 }
@@ -105,6 +128,211 @@ void MainMenuState::CreateUI() {
     top->GetStyle().marginTop = Panorama::Length::Px(0);
     m_ui->root->AddChild(top);
     
+    // === TOP-LEFT BUTTONS (Settings, Return to Game) ===
+    // Settings button (gear icon) - always visible
+    m_ui->settingsButton = std::make_shared<Panorama::CButton>("⚙", "SettingsBtn");
+    m_ui->settingsButton->GetStyle().width = Panorama::Length::Px(40);
+    m_ui->settingsButton->GetStyle().height = Panorama::Length::Px(40);
+    m_ui->settingsButton->GetStyle().marginLeft = Panorama::Length::Px(10);
+    m_ui->settingsButton->GetStyle().marginTop = Panorama::Length::Px(7);
+    m_ui->settingsButton->GetStyle().backgroundColor = Panorama::Color(0.12f, 0.12f, 0.15f, 0.9f);
+    m_ui->settingsButton->GetStyle().borderRadius = 4.0f;
+    m_ui->settingsButton->GetStyle().fontSize = 20.0f;
+    m_ui->settingsButton->SetOnActivate([this]() { OnSettingsClicked(); });
+    top->AddChild(m_ui->settingsButton);
+    
+    // Return to Game button - only visible when game in progress
+    m_ui->returnToGameButton = std::make_shared<Panorama::CButton>("←", "ReturnBtn");
+    m_ui->returnToGameButton->GetStyle().width = Panorama::Length::Px(160);
+    m_ui->returnToGameButton->GetStyle().height = Panorama::Length::Px(40);
+    m_ui->returnToGameButton->GetStyle().marginLeft = Panorama::Length::Px(60);
+    m_ui->returnToGameButton->GetStyle().marginTop = Panorama::Length::Px(7);
+    m_ui->returnToGameButton->GetStyle().backgroundColor = Panorama::Color(0.18f, 0.45f, 0.18f, 1.0f);
+    m_ui->returnToGameButton->GetStyle().borderRadius = 4.0f;
+    m_ui->returnToGameButton->GetStyle().fontSize = 14.0f;
+    m_ui->returnToGameButton->GetStyle().color = Panorama::Color::White();
+    m_ui->returnToGameButton->SetOnActivate([this]() {
+        // Return to the game (pop this state)
+        if (m_manager) {
+            m_manager->PopState();
+        }
+    });
+    m_ui->returnToGameButton->SetVisible(m_manager && m_manager->IsGameInProgress());
+    top->AddChild(m_ui->returnToGameButton);
+    
+    // ===== SETTINGS POPUP OVERLAY =====
+    m_ui->settingsPanel = std::make_shared<Panorama::CPanel2D>("SettingsOverlay");
+    m_ui->settingsPanel->GetStyle().width = Panorama::Length::Fill();
+    m_ui->settingsPanel->GetStyle().height = Panorama::Length::Fill();
+    m_ui->settingsPanel->GetStyle().backgroundColor = Panorama::Color(0.0f, 0.0f, 0.0f, 0.75f);
+    m_ui->settingsPanel->SetVisible(false);
+    m_ui->root->AddChild(m_ui->settingsPanel);
+    
+    // Settings popup window (centered)
+    auto settingsWindow = std::make_shared<Panorama::CPanel2D>("SettingsWindow");
+    settingsWindow->GetStyle().width = Panorama::Length::Px(600);
+    settingsWindow->GetStyle().height = Panorama::Length::Px(450);
+    settingsWindow->GetStyle().backgroundColor = Panorama::Color(0.08f, 0.09f, 0.12f, 0.98f);
+    settingsWindow->GetStyle().borderRadius = 8.0f;
+    settingsWindow->GetStyle().marginLeft = Panorama::Length::Px((sw - 600) / 2);
+    settingsWindow->GetStyle().marginTop = Panorama::Length::Px((sh - 450) / 2);
+    m_ui->settingsPanel->AddChild(settingsWindow);
+    
+    // Header bar
+    auto settingsHeader = std::make_shared<Panorama::CPanel2D>("SettingsHeader");
+    settingsHeader->GetStyle().width = Panorama::Length::Fill();
+    settingsHeader->GetStyle().height = Panorama::Length::Px(50);
+    settingsHeader->GetStyle().backgroundColor = Panorama::Color(0.05f, 0.06f, 0.08f, 1.0f);
+    settingsWindow->AddChild(settingsHeader);
+    
+    auto settingsTitle = std::make_shared<Panorama::CLabel>("SETTINGS", "SettingsTitle");
+    settingsTitle->GetStyle().fontSize = 22.0f;
+    settingsTitle->GetStyle().color = Panorama::Color(0.9f, 0.9f, 0.9f, 1.0f);
+    settingsTitle->GetStyle().marginLeft = Panorama::Length::Px(20);
+    settingsTitle->GetStyle().marginTop = Panorama::Length::Px(12);
+    settingsHeader->AddChild(settingsTitle);
+    
+    // Close button (X)
+    auto closeBtn = std::make_shared<Panorama::CButton>("✕", "SettingsClose");
+    closeBtn->GetStyle().width = Panorama::Length::Px(40);
+    closeBtn->GetStyle().height = Panorama::Length::Px(40);
+    closeBtn->GetStyle().backgroundColor = Panorama::Color(0.5f, 0.15f, 0.15f, 0.9f);
+    closeBtn->GetStyle().borderRadius = 4.0f;
+    closeBtn->GetStyle().fontSize = 18.0f;
+    closeBtn->GetStyle().color = Panorama::Color::White();
+    closeBtn->GetStyle().marginLeft = Panorama::Length::Px(550);
+    closeBtn->GetStyle().marginTop = Panorama::Length::Px(5);
+    closeBtn->SetOnActivate([this]() {
+        if (m_ui && m_ui->settingsPanel) m_ui->settingsPanel->SetVisible(false);
+    });
+    settingsHeader->AddChild(closeBtn);
+    
+    // Settings content area
+    auto settingsContent = std::make_shared<Panorama::CPanel2D>("SettingsContent");
+    settingsContent->GetStyle().width = Panorama::Length::Fill();
+    settingsContent->GetStyle().height = Panorama::Length::Px(400);
+    settingsContent->GetStyle().marginTop = Panorama::Length::Px(50);
+    settingsContent->GetStyle().paddingLeft = Panorama::Length::Px(20);
+    settingsContent->GetStyle().paddingTop = Panorama::Length::Px(20);
+    settingsWindow->AddChild(settingsContent);
+    
+    // Tab buttons row
+    const char* tabs[] = {"VIDEO", "AUDIO", "CONTROLS", "GAME"};
+    for (int i = 0; i < 4; i++) {
+        auto tabBtn = std::make_shared<Panorama::CButton>(tabs[i], std::string("SettingsTab") + std::to_string(i));
+        tabBtn->GetStyle().width = Panorama::Length::Px(120);
+        tabBtn->GetStyle().height = Panorama::Length::Px(36);
+        tabBtn->GetStyle().backgroundColor = (i == 0) 
+            ? Panorama::Color(0.2f, 0.22f, 0.28f, 1.0f)  // Active tab
+            : Panorama::Color(0.12f, 0.13f, 0.16f, 1.0f);
+        tabBtn->GetStyle().borderRadius = 4.0f;
+        tabBtn->GetStyle().fontSize = 14.0f;
+        tabBtn->GetStyle().color = Panorama::Color(0.8f, 0.8f, 0.8f, 1.0f);
+        tabBtn->GetStyle().marginLeft = Panorama::Length::Px(i * 130);
+        tabBtn->GetStyle().marginTop = Panorama::Length::Px(0);
+        settingsContent->AddChild(tabBtn);
+    }
+    
+    // Video settings (placeholder content)
+    auto videoSection = std::make_shared<Panorama::CPanel2D>("VideoSettings");
+    videoSection->GetStyle().width = Panorama::Length::Px(540);
+    videoSection->GetStyle().height = Panorama::Length::Px(280);
+    videoSection->GetStyle().backgroundColor = Panorama::Color(0.06f, 0.07f, 0.09f, 0.8f);
+    videoSection->GetStyle().borderRadius = 4.0f;
+    videoSection->GetStyle().marginTop = Panorama::Length::Px(50);
+    settingsContent->AddChild(videoSection);
+    
+    // Resolution label
+    auto resLabel = std::make_shared<Panorama::CLabel>("Resolution", "ResLabel");
+    resLabel->GetStyle().fontSize = 14.0f;
+    resLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
+    resLabel->GetStyle().marginLeft = Panorama::Length::Px(20);
+    resLabel->GetStyle().marginTop = Panorama::Length::Px(20);
+    videoSection->AddChild(resLabel);
+    
+    auto resValue = std::make_shared<Panorama::CLabel>("1920 x 1080", "ResValue");
+    resValue->GetStyle().fontSize = 14.0f;
+    resValue->GetStyle().color = Panorama::Color(0.9f, 0.9f, 0.9f, 1.0f);
+    resValue->GetStyle().marginLeft = Panorama::Length::Px(200);
+    resValue->GetStyle().marginTop = Panorama::Length::Px(20);
+    videoSection->AddChild(resValue);
+    
+    // Display Mode
+    auto modeLabel = std::make_shared<Panorama::CLabel>("Display Mode", "ModeLabel");
+    modeLabel->GetStyle().fontSize = 14.0f;
+    modeLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
+    modeLabel->GetStyle().marginLeft = Panorama::Length::Px(20);
+    modeLabel->GetStyle().marginTop = Panorama::Length::Px(55);
+    videoSection->AddChild(modeLabel);
+    
+    auto modeValue = std::make_shared<Panorama::CLabel>("Fullscreen", "ModeValue");
+    modeValue->GetStyle().fontSize = 14.0f;
+    modeValue->GetStyle().color = Panorama::Color(0.9f, 0.9f, 0.9f, 1.0f);
+    modeValue->GetStyle().marginLeft = Panorama::Length::Px(200);
+    modeValue->GetStyle().marginTop = Panorama::Length::Px(55);
+    videoSection->AddChild(modeValue);
+    
+    // VSync
+    auto vsyncLabel = std::make_shared<Panorama::CLabel>("VSync", "VsyncLabel");
+    vsyncLabel->GetStyle().fontSize = 14.0f;
+    vsyncLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
+    vsyncLabel->GetStyle().marginLeft = Panorama::Length::Px(20);
+    vsyncLabel->GetStyle().marginTop = Panorama::Length::Px(90);
+    videoSection->AddChild(vsyncLabel);
+    
+    auto vsyncValue = std::make_shared<Panorama::CLabel>("On", "VsyncValue");
+    vsyncValue->GetStyle().fontSize = 14.0f;
+    vsyncValue->GetStyle().color = Panorama::Color(0.5f, 0.8f, 0.5f, 1.0f);
+    vsyncValue->GetStyle().marginLeft = Panorama::Length::Px(200);
+    vsyncValue->GetStyle().marginTop = Panorama::Length::Px(90);
+    videoSection->AddChild(vsyncValue);
+    
+    // Render Quality
+    auto qualLabel = std::make_shared<Panorama::CLabel>("Render Quality", "QualLabel");
+    qualLabel->GetStyle().fontSize = 14.0f;
+    qualLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
+    qualLabel->GetStyle().marginLeft = Panorama::Length::Px(20);
+    qualLabel->GetStyle().marginTop = Panorama::Length::Px(125);
+    videoSection->AddChild(qualLabel);
+    
+    auto qualValue = std::make_shared<Panorama::CLabel>("High", "QualValue");
+    qualValue->GetStyle().fontSize = 14.0f;
+    qualValue->GetStyle().color = Panorama::Color(0.9f, 0.9f, 0.9f, 1.0f);
+    qualValue->GetStyle().marginLeft = Panorama::Length::Px(200);
+    qualValue->GetStyle().marginTop = Panorama::Length::Px(125);
+    videoSection->AddChild(qualValue);
+    
+    // Apply button
+    auto applyBtn = std::make_shared<Panorama::CButton>("APPLY", "SettingsApply");
+    applyBtn->GetStyle().width = Panorama::Length::Px(120);
+    applyBtn->GetStyle().height = Panorama::Length::Px(40);
+    applyBtn->GetStyle().backgroundColor = Panorama::Color(0.18f, 0.45f, 0.18f, 1.0f);
+    applyBtn->GetStyle().borderRadius = 4.0f;
+    applyBtn->GetStyle().fontSize = 14.0f;
+    applyBtn->GetStyle().color = Panorama::Color::White();
+    applyBtn->GetStyle().marginLeft = Panorama::Length::Px(290);
+    applyBtn->GetStyle().marginTop = Panorama::Length::Px(340);
+    applyBtn->SetOnActivate([this]() {
+        ConsoleLog("Settings applied");
+        if (m_ui && m_ui->settingsPanel) m_ui->settingsPanel->SetVisible(false);
+    });
+    settingsContent->AddChild(applyBtn);
+    
+    // Cancel button
+    auto cancelBtn = std::make_shared<Panorama::CButton>("CANCEL", "SettingsCancel");
+    cancelBtn->GetStyle().width = Panorama::Length::Px(120);
+    cancelBtn->GetStyle().height = Panorama::Length::Px(40);
+    cancelBtn->GetStyle().backgroundColor = Panorama::Color(0.25f, 0.25f, 0.3f, 1.0f);
+    cancelBtn->GetStyle().borderRadius = 4.0f;
+    cancelBtn->GetStyle().fontSize = 14.0f;
+    cancelBtn->GetStyle().color = Panorama::Color::White();
+    cancelBtn->GetStyle().marginLeft = Panorama::Length::Px(420);
+    cancelBtn->GetStyle().marginTop = Panorama::Length::Px(340);
+    cancelBtn->SetOnActivate([this]() {
+        if (m_ui && m_ui->settingsPanel) m_ui->settingsPanel->SetVisible(false);
+    });
+    settingsContent->AddChild(cancelBtn);
+    
     // Content container (centered, 80% width)
     auto topContent = P("TopContent", contentWidth, 55, none);
     topContent->GetStyle().marginLeft = Panorama::Length::Px(contentOffsetX);
@@ -125,13 +353,17 @@ void MainMenuState::CreateUI() {
     const char* nav[] = {"HEROES", "STORE", "WATCH", "LEARN", "ARCADE"};
     for (int i = 0; i < 5; i++) {
         auto nb = std::make_shared<Panorama::CButton>(nav[i], std::string("Nav") + std::to_string(i));
+        nb->AddClass("MainMenuNavButton");
+
+        // Let CSS control the "look" (background/border/text). Keep only geometry here.
+        // CButton constructor sets some inline defaults; clear them so stylesheet can override.
+        nb->GetStyle().backgroundColor.reset();
+        nb->GetStyle().borderWidth.reset();
+        nb->GetStyle().borderRadius.reset();
+        nb->GetStyle().borderColor.reset();
+
         nb->GetStyle().width = Panorama::Length::Px(S(55));
         nb->GetStyle().height = Panorama::Length::Px(topBarHeight); // Full height
-        nb->GetStyle().backgroundColor = Panorama::Color(0.15f, 0.15f, 0.18f, 0.8f);
-        nb->GetStyle().borderWidth = 0.0f;
-        nb->GetStyle().borderRadius = 0.0f;
-        nb->GetStyle().fontSize = F(11);
-        nb->GetStyle().color = light;
         nb->GetStyle().marginLeft = Panorama::Length::Px(S(48 + i * 61));
         nb->GetStyle().marginTop = Panorama::Length::Px(0); // No top margin
         
@@ -144,12 +376,12 @@ void MainMenuState::CreateUI() {
         topContent->AddChild(nb);
     }
     
-    auto pc = L("824,156 PLAYING", 9, gray);
+    auto pc = L("824,156 PLAYING", "caption", gray);
     pc->GetStyle().marginLeft = Panorama::Length::Px(S(contentWidth - 180));
     pc->GetStyle().marginTop = Panorama::Length::Px((topBarHeight - S(9)) / 2.0f);
     topContent->AddChild(pc);
     
-    auto tm = L("7:48 PM", 9, gray);
+    auto tm = L("7:48 PM", "caption", gray);
     tm->GetStyle().marginLeft = Panorama::Length::Px(S(contentWidth - 60));
     tm->GetStyle().marginTop = Panorama::Length::Px((topBarHeight - S(9)) / 2.0f);
     topContent->AddChild(tm);
@@ -180,7 +412,7 @@ void MainMenuState::CreateUI() {
     prof->GetStyle().marginTop = Panorama::Length::Px(S(0));
     left->AddChild(prof);
 
-    auto ph = L("MY PROFILE", 8, gray);
+    auto ph = L("MY PROFILE", "body", gray);
     ph->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     ph->GetStyle().marginTop = Panorama::Length::Px(S(6));
     prof->AddChild(ph);
@@ -192,14 +424,20 @@ void MainMenuState::CreateUI() {
     av->GetStyle().marginTop = Panorama::Length::Px(S(24));
     prof->AddChild(av);
 
-    // Username
-    auto un = L("Choice", 12, green);
-    un->GetStyle().marginLeft = Panorama::Length::Px(S(54));
-    un->GetStyle().marginTop = Panorama::Length::Px(S(26));
-    prof->AddChild(un);
+    // Username - get from AuthClient
+    std::string username = "Player";
+    if (auto* authClient = m_manager->GetAuthClient()) {
+        if (authClient->IsAuthenticated()) {
+            username = authClient->GetUsername();
+        }
+    }
+    m_ui->usernameLabel = L(username, "body", green);
+    m_ui->usernameLabel->GetStyle().marginLeft = Panorama::Length::Px(S(54));
+    m_ui->usernameLabel->GetStyle().marginTop = Panorama::Length::Px(S(26));
+    prof->AddChild(m_ui->usernameLabel);
     
     // Status
-    auto us = L("Main Menu", 9, gray);
+    auto us = L("Main Menu", "caption", gray);
     us->GetStyle().marginLeft = Panorama::Length::Px(S(54));
     us->GetStyle().marginTop = Panorama::Length::Px(S(42));
     prof->AddChild(us);
@@ -222,12 +460,12 @@ void MainMenuState::CreateUI() {
     }
 
     // Stats
-    auto ms = L("MATCHES\n776", 8, gray);
+    auto ms = L("MATCHES\n776", "small", gray);
     ms->GetStyle().marginLeft = Panorama::Length::Px(S(30));
     ms->GetStyle().marginTop = Panorama::Length::Px(S(102));
     prof->AddChild(ms);
     
-    auto cs = L("COMMENDS\n167", 8, gray);
+    auto cs = L("COMMENDS\n167", "small", gray);
     cs->GetStyle().marginLeft = Panorama::Length::Px(S(140));
     cs->GetStyle().marginTop = Panorama::Length::Px(S(102));
     prof->AddChild(cs);
@@ -238,12 +476,12 @@ void MainMenuState::CreateUI() {
     bp->GetStyle().marginTop = Panorama::Length::Px(S(136));
     left->AddChild(bp);
 
-    auto bpt = L("BATTLE PASS", 8, gray);
+    auto bpt = L("BATTLE PASS", "small", gray);
     bpt->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     bpt->GetStyle().marginTop = Panorama::Length::Px(S(5));
     bp->AddChild(bpt);
     
-    auto bpx = L("The Fall 2024 Battle Pass is Here", 9, green);
+    auto bpx = L("The Fall 2024 Battle Pass is Here", "caption", green);
     bpx->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     bpx->GetStyle().marginTop = Panorama::Length::Px(S(18));
     bp->AddChild(bpx);
@@ -255,7 +493,7 @@ void MainMenuState::CreateUI() {
     lkb->GetStyle().borderRadius = S(2);
     lkb->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     lkb->GetStyle().marginTop = Panorama::Length::Px(S(30));
-    lkb->GetStyle().fontSize = F(9);
+    lkb->AddClass("caption");  // CSS class for font size
     lkb->GetStyle().color = Panorama::Color::White();
     bp->AddChild(lkb);
 
@@ -266,12 +504,12 @@ void MainMenuState::CreateUI() {
     fr->GetStyle().marginTop = Panorama::Length::Px(S(192));
     left->AddChild(fr);
 
-    auto fh = L("FRIENDS", 8, gray);
+    auto fh = L("FRIENDS", "small", gray);
     fh->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     fh->GetStyle().marginTop = Panorama::Length::Px(S(6));
     fr->AddChild(fh);
     
-    auto id = L("IN DOTA (4)", 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto id = L("IN DOTA (4)", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     id->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     id->GetStyle().marginTop = Panorama::Length::Px(S(22));
     fr->AddChild(id);
@@ -293,13 +531,13 @@ void MainMenuState::CreateUI() {
         frw->AddChild(fa);
 
         // Friend name
-        auto fnl = L(fn[i], 10, Panorama::Color(0.45f, 0.65f, 0.45f, 1.0f));
+        auto fnl = L(fn[i], "caption", Panorama::Color(0.45f, 0.65f, 0.45f, 1.0f));
         fnl->GetStyle().marginLeft = Panorama::Length::Px(S(28));
         fnl->GetStyle().marginTop = Panorama::Length::Px(S(2));
         frw->AddChild(fnl);
         
         // Friend status
-        auto fhl = L(fhr[i], 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+        auto fhl = L(fhr[i], "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
         fhl->GetStyle().marginLeft = Panorama::Length::Px(S(28));
         fhl->GetStyle().marginTop = Panorama::Length::Px(S(14));
         frw->AddChild(fhl);
@@ -320,7 +558,7 @@ void MainMenuState::CreateUI() {
     n1->GetStyle().borderRadius = S(3);
     ctr->AddChild(n1);
 
-    auto n1h = L("NEW IN DOTA 2", 7, gray);
+    auto n1h = L("NEW IN DOTA 2", "small", gray);
     n1h->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     n1h->GetStyle().marginTop = Panorama::Length::Px(S(6));
     n1->AddChild(n1h);
@@ -331,7 +569,7 @@ void MainMenuState::CreateUI() {
     n1i->GetStyle().marginTop = Panorama::Length::Px(S(20));
     n1->AddChild(n1i);
     
-    auto n1t = L("FALL 2024 TREASURE II", 10, Panorama::Color::White());
+    auto n1t = L("FALL 2024 TREASURE II", "caption", Panorama::Color::White());
     n1t->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     n1t->GetStyle().marginTop = Panorama::Length::Px(S(95));
     n1->AddChild(n1t);
@@ -343,7 +581,7 @@ void MainMenuState::CreateUI() {
     n2->GetStyle().marginTop = Panorama::Length::Px(S(0));
     ctr->AddChild(n2);
 
-    auto n2h = L("PRO PLAYING LIVE", 7, gray);
+    auto n2h = L("PRO PLAYING LIVE", "small", gray);
     n2h->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     n2h->GetStyle().marginTop = Panorama::Length::Px(S(6));
     n2->AddChild(n2h);
@@ -354,7 +592,7 @@ void MainMenuState::CreateUI() {
     n2i->GetStyle().marginTop = Panorama::Length::Px(S(20));
     n2->AddChild(n2i);
     
-    auto n2t = L("FlipSid3.RodjER", 10, Panorama::Color::White());
+    auto n2t = L("FlipSid3.RodjER", "caption", Panorama::Color::White());
     n2t->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     n2t->GetStyle().marginTop = Panorama::Length::Px(S(95));
     n2->AddChild(n2t);
@@ -372,12 +610,12 @@ void MainMenuState::CreateUI() {
     bpi->GetStyle().marginTop = Panorama::Length::Px(S(15));
     ft1->AddChild(bpi);
     
-    auto bpl1 = L("FALL 2024", 8, Panorama::Color(0.75f, 0.65f, 0.35f, 1.0f));
+    auto bpl1 = L("FALL 2024", "small", Panorama::Color(0.75f, 0.65f, 0.35f, 1.0f));
     bpl1->GetStyle().marginLeft = Panorama::Length::Px(S(59));
     bpl1->GetStyle().marginTop = Panorama::Length::Px(S(20));
     ft1->AddChild(bpl1);
     
-    auto bpl2 = L("BATTLE PASS", 8, Panorama::Color(0.75f, 0.65f, 0.35f, 1.0f));
+    auto bpl2 = L("BATTLE PASS", "small", Panorama::Color(0.75f, 0.65f, 0.35f, 1.0f));
     bpl2->GetStyle().marginLeft = Panorama::Length::Px(S(59));
     bpl2->GetStyle().marginTop = Panorama::Length::Px(S(32));
     ft1->AddChild(bpl2);
@@ -389,7 +627,7 @@ void MainMenuState::CreateUI() {
     ft2->GetStyle().marginTop = Panorama::Length::Px(S(121));
     ctr->AddChild(ft2);
 
-    auto gd = L("GAME OF THE DAY", 7, gray);
+    auto gd = L("GAME OF THE DAY", "small", gray);
     gd->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     gd->GetStyle().marginTop = Panorama::Length::Px(S(6));
     ft2->AddChild(gd);
@@ -400,7 +638,7 @@ void MainMenuState::CreateUI() {
     hm->GetStyle().marginTop = Panorama::Length::Px(S(26));
     ft2->AddChild(hm);
     
-    auto hml = L("HORDE MODE", 11, Panorama::Color::White());
+    auto hml = L("HORDE MODE", "body", Panorama::Color::White());
     hml->GetStyle().marginLeft = Panorama::Length::Px(S(10));
     hml->GetStyle().marginTop = Panorama::Length::Px(S(12));
     hm->AddChild(hml);
@@ -415,23 +653,23 @@ void MainMenuState::CreateUI() {
     auto chh = P("CHH", 0, 22, Panorama::Color(0.06f, 0.06f, 0.08f, 1.0f));
     ch->AddChild(chh);
 
-    auto pty = L("Party", 10, Panorama::Color(0.55f, 0.55f, 0.55f, 1.0f));
+    auto pty = L("Party", "caption", Panorama::Color(0.55f, 0.55f, 0.55f, 1.0f));
     pty->GetStyle().marginLeft = Panorama::Length::Px(S(10));
     pty->GetStyle().marginTop = Panorama::Length::Px(S(5));
     chh->AddChild(pty);
     
-    auto chl = L("CHANNELS +", 8, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto chl = L("CHANNELS +", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     chl->GetStyle().marginLeft = Panorama::Length::Px(S(150));
     chl->GetStyle().marginTop = Panorama::Length::Px(S(7));
     chh->AddChild(chl);
 
     // Chat messages
-    auto m1 = L("Serenity: noob riki", 10, Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
+    auto m1 = L("Serenity: noob riki", "caption", Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
     m1->GetStyle().marginLeft = Panorama::Length::Px(S(10));
     m1->GetStyle().marginTop = Panorama::Length::Px(S(28));
     ch->AddChild(m1);
     
-    auto m2 = L("Choice: poor pudge", 10, Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
+    auto m2 = L("Choice: poor pudge", "caption", Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
     m2->GetStyle().marginLeft = Panorama::Length::Px(S(10));
     m2->GetStyle().marginTop = Panorama::Length::Px(S(44));
     ch->AddChild(m2);
@@ -457,47 +695,47 @@ void MainMenuState::CreateUI() {
     lm->GetStyle().marginTop = Panorama::Length::Px(S(0));
     rgt->AddChild(lm);
 
-    auto lmh = L("YOUR LAST MATCH", 7, gray);
+    auto lmh = L("YOUR LAST MATCH", "small", gray);
     lmh->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     lmh->GetStyle().marginTop = Panorama::Length::Px(S(6));
     lm->AddChild(lmh);
     
-    auto lmt = L("10/31/2024  7:03 PM", 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto lmt = L("10/31/2024  7:03 PM", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     lmt->GetStyle().marginLeft = Panorama::Length::Px(S(135));
     lmt->GetStyle().marginTop = Panorama::Length::Px(S(6));
     lm->AddChild(lmt);
 
-    auto hn = L("JUGGERNAUT", 14, Panorama::Color::White());
+    auto hn = L("JUGGERNAUT", "subheading", Panorama::Color::White());
     hn->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     hn->GetStyle().marginTop = Panorama::Length::Px(S(24));
     lm->AddChild(hn);
 
-    auto rs = L("WON - ALL PICK", 10, Panorama::Color(0.28f, 0.7f, 0.28f, 1.0f));
+    auto rs = L("WON - ALL PICK", "caption", Panorama::Color(0.28f, 0.7f, 0.28f, 1.0f));
     rs->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     rs->GetStyle().marginTop = Panorama::Length::Px(S(44));
     lm->AddChild(rs);
 
-    auto kdl = L("K/D/A", 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto kdl = L("K/D/A", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     kdl->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     kdl->GetStyle().marginTop = Panorama::Length::Px(S(62));
     lm->AddChild(kdl);
     
-    auto kdv = L("9 / 2 / 4", 9, Panorama::Color::White());
+    auto kdv = L("9 / 2 / 4", "caption", Panorama::Color::White());
     kdv->GetStyle().marginLeft = Panorama::Length::Px(S(50));
     kdv->GetStyle().marginTop = Panorama::Length::Px(S(61));
     lm->AddChild(kdv);
     
-    auto drl = L("DURATION", 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto drl = L("DURATION", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     drl->GetStyle().marginLeft = Panorama::Length::Px(S(135));
     drl->GetStyle().marginTop = Panorama::Length::Px(S(62));
     lm->AddChild(drl);
     
-    auto drv = L("37:14", 9, Panorama::Color::White());
+    auto drv = L("37:14", "caption", Panorama::Color::White());
     drv->GetStyle().marginLeft = Panorama::Length::Px(S(200));
     drv->GetStyle().marginTop = Panorama::Length::Px(S(61));
     lm->AddChild(drv);
 
-    auto itl = L("ITEMS", 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto itl = L("ITEMS", "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     itl->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     itl->GetStyle().marginTop = Panorama::Length::Px(S(80));
     lm->AddChild(itl);
@@ -517,7 +755,7 @@ void MainMenuState::CreateUI() {
     act->GetStyle().marginTop = Panorama::Length::Px(S(126));
     rgt->AddChild(act);
 
-    auto acth = L("Say something on your feed...", 9, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+    auto acth = L("Say something on your feed...", "caption", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
     acth->GetStyle().marginLeft = Panorama::Length::Px(S(8));
     acth->GetStyle().marginTop = Panorama::Length::Px(S(6));
     act->AddChild(acth);
@@ -541,13 +779,13 @@ void MainMenuState::CreateUI() {
         ae->AddChild(aa);
 
         // Activity text
-        auto atx = L(at[i], 8, Panorama::Color(0.55f, 0.55f, 0.55f, 1.0f));
+        auto atx = L(at[i], "small", Panorama::Color(0.55f, 0.55f, 0.55f, 1.0f));
         atx->GetStyle().marginLeft = Panorama::Length::Px(S(36));
         atx->GetStyle().marginTop = Panorama::Length::Px(S(8));
         ae->AddChild(atx);
         
         // Time
-        auto atmx = L(atm[i], 7, Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
+        auto atmx = L(atm[i], "small", Panorama::Color(0.35f, 0.35f, 0.35f, 1.0f));
         atmx->GetStyle().marginLeft = Panorama::Length::Px(S(36));
         atmx->GetStyle().marginTop = Panorama::Length::Px(S(22));
         ae->AddChild(atmx);
@@ -589,16 +827,16 @@ void MainMenuState::CreateUI() {
     addParty->GetStyle().marginTop = Panorama::Length::Px(15);
     m_ui->bottomBar->AddChild(addParty);
     
-    auto plusLabel = L("+", 20, Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
+    auto plusLabel = L("+", "title", Panorama::Color(0.5f, 0.5f, 0.5f, 1.0f));
     plusLabel->GetStyle().marginLeft = Panorama::Length::Px(11);
     plusLabel->GetStyle().marginTop = Panorama::Length::Px(5);
     addParty->AddChild(plusLabel);
 
     // Game mode label
-    auto modeLabel = L("ALL PICK", 12, Panorama::Color(0.6f, 0.6f, 0.6f, 1.0f));
-    modeLabel->GetStyle().marginLeft = Panorama::Length::Px(250);
-    modeLabel->GetStyle().marginTop = Panorama::Length::Px(28);
-    m_ui->bottomBar->AddChild(modeLabel);
+    auto gameModeLabel = L("ALL PICK", "body", Panorama::Color(0.6f, 0.6f, 0.6f, 1.0f));
+    gameModeLabel->GetStyle().marginLeft = Panorama::Length::Px(250);
+    gameModeLabel->GetStyle().marginTop = Panorama::Length::Px(28);
+    m_ui->bottomBar->AddChild(gameModeLabel);
 
     // Play button
     m_ui->playButton = std::make_shared<Panorama::CButton>("PLAY DOTA", "PB");
@@ -606,7 +844,7 @@ void MainMenuState::CreateUI() {
     m_ui->playButton->GetStyle().height = Panorama::Length::Px(45);
     m_ui->playButton->GetStyle().backgroundColor = greenBtn;
     m_ui->playButton->GetStyle().borderRadius = S(3);
-    m_ui->playButton->GetStyle().fontSize = F(14);
+    m_ui->playButton->AddClass("subheading");  // CSS class for font size
     m_ui->playButton->GetStyle().color = Panorama::Color::White();
     m_ui->playButton->GetStyle().marginLeft = Panorama::Length::Px(contentWidth - 200);
     m_ui->playButton->GetStyle().marginTop = Panorama::Length::Px(12);
@@ -625,7 +863,7 @@ void MainMenuState::CreateUI() {
     m_ui->findingPanel->SetVisible(false);
     m_ui->bottomBar->AddChild(m_ui->findingPanel);
 
-    m_ui->findingLabel = L("FINDING MATCH", 12, Panorama::Color(0.85f, 0.9f, 0.95f, 1.0f));
+    m_ui->findingLabel = L("FINDING MATCH", "body", Panorama::Color(0.85f, 0.9f, 0.95f, 1.0f));
     m_ui->findingLabel->GetStyle().marginLeft = Panorama::Length::Px(S(14));
     m_ui->findingLabel->GetStyle().marginTop = Panorama::Length::Px(S(14));
     m_ui->findingPanel->AddChild(m_ui->findingLabel);
@@ -635,7 +873,7 @@ void MainMenuState::CreateUI() {
     m_ui->findingCancelButton->GetStyle().height = Panorama::Length::Px(S(30));
     m_ui->findingCancelButton->GetStyle().backgroundColor = Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f);
     m_ui->findingCancelButton->GetStyle().borderRadius = S(3);
-    m_ui->findingCancelButton->GetStyle().fontSize = F(14);
+    m_ui->findingCancelButton->AddClass("subheading");  // CSS class for font size
     m_ui->findingCancelButton->GetStyle().color = Panorama::Color::White();
     // Position inside 180px button (right aligned)
     m_ui->findingCancelButton->GetStyle().marginLeft = Panorama::Length::Px(S(180 - 36));
@@ -648,7 +886,8 @@ void MainMenuState::CreateUI() {
     });
     m_ui->findingPanel->AddChild(m_ui->findingCancelButton);
 
-    m_ui->findingTimeLabel = L("00:00", 11, Panorama::Color(0.65f, 0.75f, 0.85f, 1.0f));
+    // Timer label for finding match (shown above play button when searching)
+    m_ui->findingTimeLabel = L("00:00", "body", Panorama::Color(0.65f, 0.75f, 0.85f, 1.0f));
     m_ui->findingTimeLabel->GetStyle().marginLeft = Panorama::Length::Px(playX + S(2));
     m_ui->findingTimeLabel->GetStyle().marginTop = Panorama::Length::Px(S(2));
     m_ui->findingTimeLabel->SetVisible(false);
@@ -666,12 +905,12 @@ void MainMenuState::CreateUI() {
     searchingBox->GetStyle().marginTop = Panorama::Length::Px((sh - S(170)) * 0.5f);
     m_ui->searchingOverlay->AddChild(searchingBox);
 
-    m_ui->searchingLabel = L("SEARCHING FOR MATCH...", 14, Panorama::Color(0.85f, 0.85f, 0.85f, 1.0f));
+    m_ui->searchingLabel = L("SEARCHING FOR MATCH...", "subheading", Panorama::Color(0.85f, 0.85f, 0.85f, 1.0f));
     m_ui->searchingLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->searchingLabel->GetStyle().marginTop = Panorama::Length::Px(S(22));
     searchingBox->AddChild(m_ui->searchingLabel);
 
-    m_ui->searchTimeLabel = L("00:00", 12, Panorama::Color(0.65f, 0.65f, 0.65f, 1.0f));
+    m_ui->searchTimeLabel = L("00:00", "body", Panorama::Color(0.65f, 0.65f, 0.65f, 1.0f));
     m_ui->searchTimeLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->searchTimeLabel->GetStyle().marginTop = Panorama::Length::Px(S(55));
     searchingBox->AddChild(m_ui->searchTimeLabel);
@@ -681,7 +920,7 @@ void MainMenuState::CreateUI() {
     m_ui->cancelSearchButton->GetStyle().height = Panorama::Length::Px(S(40));
     m_ui->cancelSearchButton->GetStyle().backgroundColor = Panorama::Color(0.25f, 0.25f, 0.3f, 0.95f);
     m_ui->cancelSearchButton->GetStyle().borderRadius = S(3);
-    m_ui->cancelSearchButton->GetStyle().fontSize = F(13);
+    m_ui->cancelSearchButton->AddClass("body");  // CSS class for font size
     m_ui->cancelSearchButton->GetStyle().color = Panorama::Color::White();
     m_ui->cancelSearchButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->cancelSearchButton->GetStyle().marginTop = Panorama::Length::Px(S(95));
@@ -706,19 +945,19 @@ void MainMenuState::CreateUI() {
     acceptBox->GetStyle().marginTop = Panorama::Length::Px((sh - S(210)) * 0.5f);
     m_ui->acceptOverlay->AddChild(acceptBox);
 
-    m_ui->acceptLabel = L("MATCH FOUND", 16, Panorama::Color(0.92f, 0.92f, 0.92f, 1.0f));
+    m_ui->acceptLabel = L("MATCH FOUND", "heading", Panorama::Color(0.92f, 0.92f, 0.92f, 1.0f));
     m_ui->acceptLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->acceptLabel->GetStyle().marginTop = Panorama::Length::Px(S(25));
     acceptBox->AddChild(m_ui->acceptLabel);
 
     // Countdown (Dota-like accept timer)
-    m_ui->acceptCountdownLabel = L("00:20", 12, Panorama::Color(0.65f, 0.75f, 0.85f, 1.0f));
+    m_ui->acceptCountdownLabel = L("00:20", "body", Panorama::Color(0.65f, 0.75f, 0.85f, 1.0f));
     m_ui->acceptCountdownLabel->GetStyle().marginLeft = Panorama::Length::Px(S(360));
     m_ui->acceptCountdownLabel->GetStyle().marginTop = Panorama::Length::Px(S(28));
     acceptBox->AddChild(m_ui->acceptCountdownLabel);
 
     // Status row (Dota-like cubes). Hidden until local player accepts.
-    m_ui->acceptStatusLabel = L("0/0 ACCEPTED", 12, Panorama::Color(0.75f, 0.75f, 0.75f, 1.0f));
+    m_ui->acceptStatusLabel = L("0/0 ACCEPTED", "body", Panorama::Color(0.75f, 0.75f, 0.75f, 1.0f));
     m_ui->acceptStatusLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->acceptStatusLabel->GetStyle().marginTop = Panorama::Length::Px(S(60));
     m_ui->acceptStatusLabel->SetVisible(false);
@@ -735,7 +974,7 @@ void MainMenuState::CreateUI() {
     m_ui->acceptButton->GetStyle().height = Panorama::Length::Px(S(46));
     m_ui->acceptButton->GetStyle().backgroundColor = Panorama::Color(0.18f, 0.45f, 0.18f, 1.0f);
     m_ui->acceptButton->GetStyle().borderRadius = S(3);
-    m_ui->acceptButton->GetStyle().fontSize = F(14);
+    m_ui->acceptButton->AddClass("subheading");  // CSS class for font size
     m_ui->acceptButton->GetStyle().color = Panorama::Color::White();
     m_ui->acceptButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->acceptButton->GetStyle().marginTop = Panorama::Length::Px(S(115));
@@ -782,7 +1021,7 @@ void MainMenuState::CreateUI() {
     m_ui->declineButton->GetStyle().height = Panorama::Length::Px(S(46));
     m_ui->declineButton->GetStyle().backgroundColor = Panorama::Color(0.45f, 0.18f, 0.18f, 1.0f);
     m_ui->declineButton->GetStyle().borderRadius = S(3);
-    m_ui->declineButton->GetStyle().fontSize = F(14);
+    m_ui->declineButton->AddClass("subheading");  // CSS class for font size
     m_ui->declineButton->GetStyle().color = Panorama::Color::White();
     m_ui->declineButton->GetStyle().marginLeft = Panorama::Length::Px(S(210));
     m_ui->declineButton->GetStyle().marginTop = Panorama::Length::Px(S(115));
@@ -858,131 +1097,10 @@ void MainMenuState::OnPlayClicked() {
 
     if (!m_mmClient) {
         m_mmClient = std::make_unique<WorldEditor::Matchmaking::MatchmakingClient>();
-
-        // Wire callbacks once.
-        m_mmClient->setOnQueueConfirmed([this]() {
-            ConsoleLog("Queue confirmed");
-        });
-        m_mmClient->setOnMatchFound([this](const WorldEditor::Matchmaking::LobbyInfo& lobby) {
-            ConsoleLog("Match found!");
-            // Hide finding UI and show accept overlay
-            if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
-            if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
-            if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(true);
-
-            // Reset accept UI to initial state (buttons visible, status hidden)
-            if (m_ui && m_ui->acceptButton) m_ui->acceptButton->SetVisible(true);
-            if (m_ui && m_ui->declineButton) m_ui->declineButton->SetVisible(true);
-            if (m_ui && m_ui->acceptButton) m_ui->acceptButton->SetEnabled(true);
-            if (m_ui && m_ui->declineButton) m_ui->declineButton->SetEnabled(true);
-            if (m_ui && m_ui->acceptStatusLabel) m_ui->acceptStatusLabel->SetVisible(false);
-            if (m_ui && m_ui->acceptStatusPanel) m_ui->acceptStatusPanel->SetVisible(false);
-
-            // Prime countdown text immediately.
-            if (m_ui && m_ui->acceptCountdownLabel && m_mmClient) {
-                const int sec = std::max(0, (int)std::ceil(m_mmClient->getAcceptTimeRemainingSeconds()));
-                char buf[32]{};
-                std::snprintf(buf, sizeof(buf), "%02d:%02d", sec / 60, sec % 60);
-                m_ui->acceptCountdownLabel->SetText(buf);
-            }
-
-            // Build cubes (dev: lobby.players.size() == requiredPlayers).
-            if (m_ui && m_ui->acceptStatusPanel) {
-                m_ui->acceptStatusPanel->RemoveAndDeleteChildren();
-                m_ui->acceptCubes.clear();
-                const int count = (int)lobby.players.size();
-                const float cube = S(18);
-                const float gap = S(8);
-                for (int i = 0; i < count; ++i) {
-                    auto c = P("MM_Cube_" + std::to_string(i), 18, 18, Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f));
-                    c->GetStyle().borderRadius = S(2);
-                    c->GetStyle().marginLeft = Panorama::Length::Px(i * (cube + gap));
-                    c->GetStyle().marginTop = Panorama::Length::Px(0);
-                    m_ui->acceptStatusPanel->AddChild(c);
-                    m_ui->acceptCubes.push_back(c);
-                }
-            }
-        });
-
-        m_mmClient->setOnMatchAcceptStatus([this](u16 requiredPlayers, const std::vector<u64>& playerIds, const std::vector<bool>& accepted) {
-            if (!m_ui) return;
-            const int count = (int)accepted.size();
-
-            int acceptedCount = 0;
-            for (bool a : accepted) if (a) acceptedCount++;
-
-            if (m_ui->acceptStatusLabel) {
-                m_ui->acceptStatusLabel->SetText(std::to_string(acceptedCount) + "/" + std::to_string(requiredPlayers) + " ACCEPTED");
-            }
-
-            // Update cube colors: green = accepted, red = not accepted
-            for (int i = 0; i < count && i < (int)m_ui->acceptCubes.size(); ++i) {
-                if (!m_ui->acceptCubes[i]) continue;
-                m_ui->acceptCubes[i]->GetStyle().backgroundColor = accepted[i]
-                    ? Panorama::Color(0.18f, 0.55f, 0.18f, 1.0f)
-                    : Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f);
-            }
-
-            // If local player accepted, show status row (Dota-like).
-            if (m_mmClient) {
-                const u64 selfId = m_mmClient->getPlayerInfo().steamId;
-                bool selfAccepted = false;
-                for (size_t i = 0; i < playerIds.size() && i < accepted.size(); ++i) {
-                    if (playerIds[i] == selfId) {
-                        selfAccepted = accepted[i];
-                        break;
-                    }
-                }
-                if (selfAccepted) {
-                    if (m_ui->acceptButton) m_ui->acceptButton->SetVisible(false);
-                    if (m_ui->declineButton) m_ui->declineButton->SetVisible(false);
-                    if (m_ui->acceptStatusLabel) m_ui->acceptStatusLabel->SetVisible(true);
-                    if (m_ui->acceptStatusPanel) m_ui->acceptStatusPanel->SetVisible(true);
-                }
-            }
-        });
-        m_mmClient->setOnMatchReady([this](const std::string& serverIP, u16 port) {
-            ConsoleLog("Match ready! Connecting...");
-            if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(false);
-            if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
-            if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
-
-            // Pass server endpoint to LoadingState (no manual selection).
-            if (m_manager) {
-                if (auto* loading = m_manager->GetLoadingState()) {
-                    loading->SetServerTarget(serverIP, port);
-                }
-            }
-
-            LOG_INFO("Transitioning to Loading state (server {}:{})", serverIP, port);
-            m_manager->ChangeState(EGameState::Loading);
-        });
-        m_mmClient->setOnMatchCancelled([this](const std::string& reason, bool shouldRequeue) {
-            ConsoleLog(std::string("Match cancelled: ") + reason + (shouldRequeue ? " (returning to queue)" : ""));
-            if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(false);
-            
-            if (shouldRequeue) {
-                // Player accepted but someone else didn't - return to search UI
-                if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(true);
-                if (m_ui && m_ui->findingTimeLabel) {
-                    m_ui->findingTimeLabel->SetText("00:00");
-                    m_ui->findingTimeLabel->SetVisible(true);
-                }
-                if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(false);
-            } else {
-                // This player didn't accept - show normal Play button (no timer)
-                if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
-                if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
-                if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(true);
-            }
-        });
-        m_mmClient->setOnError([this](const std::string& error) {
-            ConsoleLog(std::string("MM error: ") + error);
-            if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
-            if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
-            if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(true);
-        });
     }
+    
+    // Always setup callbacks (in case client was created by CheckForActiveGame)
+    SetupMatchmakingCallbacks();
 
     if (!m_mmClient->isConnected()) {
         // Get session token from AuthClient
@@ -1030,13 +1148,335 @@ void MainMenuState::OnPlayClicked() {
 }
 
 void MainMenuState::OnSettingsClicked() {
-    Panorama::CGameEventData d;
-    Panorama::GameEvents_Fire("UI_OpenSettings", d);
+    // Toggle settings panel visibility
+    if (m_ui && m_ui->settingsPanel) {
+        bool visible = m_ui->settingsPanel->IsVisible();
+        m_ui->settingsPanel->SetVisible(!visible);
+    }
 }
 
 void MainMenuState::OnExitClicked() {
     Panorama::CGameEventData d;
     Panorama::GameEvents_Fire("Game_RequestExit", d);
+}
+
+void MainMenuState::CheckForActiveGame() {
+    // Get account ID from AuthClient
+    auto* authClient = m_manager->GetAuthClient();
+    if (!authClient || !authClient->IsAuthenticated()) {
+        return;  // Not logged in, no active game check needed
+    }
+    
+    u64 accountId = authClient->GetAccountId();
+    if (accountId == 0) return;
+    
+    // Create matchmaking client if needed
+    if (!m_mmClient) {
+        m_mmClient = std::make_unique<WorldEditor::Matchmaking::MatchmakingClient>();
+        SetupReconnectCallbacks();
+    }
+    
+    // Connect to coordinator if not connected
+    if (!m_mmClient->isConnected()) {
+        std::string sessionToken = authClient->GetSessionToken();
+        m_mmClient->setSessionToken(sessionToken);
+        
+        if (!m_mmClient->connect("127.0.0.1", 27017)) {
+            LOG_WARN("Failed to connect to matchmaking coordinator for active game check");
+            return;
+        }
+    }
+    
+    // Check for active game
+    m_mmClient->checkForActiveGame(accountId);
+    LOG_INFO("Checking for active game for account {}", accountId);
+}
+
+void MainMenuState::SetupMatchmakingCallbacks() {
+    if (!m_mmClient) return;
+    
+    m_mmClient->setOnQueueConfirmed([this]() {
+        ConsoleLog("Queue confirmed");
+    });
+    
+    m_mmClient->setOnMatchFound([this](const WorldEditor::Matchmaking::LobbyInfo& lobby) {
+        LOG_INFO("=== onMatchFound callback triggered! ===");
+        ConsoleLog("Match found!");
+        // Hide finding UI and show accept overlay
+        if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
+        if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
+        if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(true);
+
+        // Reset accept UI to initial state (buttons visible, status hidden)
+        if (m_ui && m_ui->acceptButton) m_ui->acceptButton->SetVisible(true);
+        if (m_ui && m_ui->declineButton) m_ui->declineButton->SetVisible(true);
+        if (m_ui && m_ui->acceptButton) m_ui->acceptButton->SetEnabled(true);
+        if (m_ui && m_ui->declineButton) m_ui->declineButton->SetEnabled(true);
+        if (m_ui && m_ui->acceptStatusLabel) m_ui->acceptStatusLabel->SetVisible(false);
+        if (m_ui && m_ui->acceptStatusPanel) m_ui->acceptStatusPanel->SetVisible(false);
+
+        // Prime countdown text immediately.
+        if (m_ui && m_ui->acceptCountdownLabel && m_mmClient) {
+            const int sec = std::max(0, (int)std::ceil(m_mmClient->getAcceptTimeRemainingSeconds()));
+            char buf[32]{};
+            std::snprintf(buf, sizeof(buf), "%02d:%02d", sec / 60, sec % 60);
+            m_ui->acceptCountdownLabel->SetText(buf);
+        }
+
+        // Build cubes (dev: lobby.players.size() == requiredPlayers).
+        if (m_ui && m_ui->acceptStatusPanel) {
+            m_ui->acceptStatusPanel->RemoveAndDeleteChildren();
+            m_ui->acceptCubes.clear();
+            const int count = (int)lobby.players.size();
+            const float cube = S(18);
+            const float gap = S(8);
+            for (int i = 0; i < count; ++i) {
+                auto c = P("MM_Cube_" + std::to_string(i), 18, 18, Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f));
+                c->GetStyle().borderRadius = S(2);
+                c->GetStyle().marginLeft = Panorama::Length::Px(i * (cube + gap));
+                c->GetStyle().marginTop = Panorama::Length::Px(0);
+                m_ui->acceptStatusPanel->AddChild(c);
+                m_ui->acceptCubes.push_back(c);
+            }
+        }
+    });
+
+    m_mmClient->setOnMatchAcceptStatus([this](u16 requiredPlayers, const std::vector<u64>& playerIds, const std::vector<bool>& accepted) {
+        if (!m_ui) return;
+        const int count = (int)accepted.size();
+
+        int acceptedCount = 0;
+        for (bool a : accepted) if (a) acceptedCount++;
+
+        if (m_ui->acceptStatusLabel) {
+            m_ui->acceptStatusLabel->SetText(std::to_string(acceptedCount) + "/" + std::to_string(requiredPlayers) + " ACCEPTED");
+        }
+
+        // Update cube colors: green = accepted, red = not accepted
+        for (int i = 0; i < count && i < (int)m_ui->acceptCubes.size(); ++i) {
+            if (!m_ui->acceptCubes[i]) continue;
+            m_ui->acceptCubes[i]->GetStyle().backgroundColor = accepted[i]
+                ? Panorama::Color(0.18f, 0.55f, 0.18f, 1.0f)
+                : Panorama::Color(0.55f, 0.16f, 0.16f, 1.0f);
+        }
+
+        // If local player accepted, show status row (Dota-like).
+        if (m_mmClient) {
+            const u64 selfId = m_mmClient->getPlayerInfo().steamId;
+            bool selfAccepted = false;
+            for (size_t i = 0; i < playerIds.size() && i < accepted.size(); ++i) {
+                if (playerIds[i] == selfId) {
+                    selfAccepted = accepted[i];
+                    break;
+                }
+            }
+            if (selfAccepted) {
+                if (m_ui->acceptButton) m_ui->acceptButton->SetVisible(false);
+                if (m_ui->declineButton) m_ui->declineButton->SetVisible(false);
+                if (m_ui->acceptStatusLabel) m_ui->acceptStatusLabel->SetVisible(true);
+                if (m_ui->acceptStatusPanel) m_ui->acceptStatusPanel->SetVisible(true);
+            }
+        }
+    });
+    
+    m_mmClient->setOnMatchReady([this](const std::string& serverIP, u16 port) {
+        ConsoleLog("Match ready! Connecting...");
+        if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(false);
+        if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
+        if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
+
+        // Pass server endpoint to LoadingState (no manual selection).
+        if (m_manager) {
+            if (auto* loading = m_manager->GetLoadingState()) {
+                loading->SetServerTarget(serverIP, port);
+                loading->SetReconnect(false);  // Normal flow - go through hero pick
+            }
+        }
+
+        LOG_INFO("Transitioning to Loading state (server {}:{})", serverIP, port);
+        m_manager->ChangeState(EGameState::Loading);
+    });
+    
+    m_mmClient->setOnMatchCancelled([this](const std::string& reason, bool shouldRequeue) {
+        ConsoleLog(std::string("Match cancelled: ") + reason + (shouldRequeue ? " (returning to queue)" : ""));
+        if (m_ui && m_ui->acceptOverlay) m_ui->acceptOverlay->SetVisible(false);
+        
+        if (shouldRequeue) {
+            // Player accepted but someone else didn't - return to search UI
+            if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(true);
+            if (m_ui && m_ui->findingTimeLabel) {
+                m_ui->findingTimeLabel->SetText("00:00");
+                m_ui->findingTimeLabel->SetVisible(true);
+            }
+            if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(false);
+        } else {
+            // This player didn't accept - show normal Play button (no timer)
+            if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
+            if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
+            if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(true);
+        }
+    });
+    
+    m_mmClient->setOnError([this](const std::string& error) {
+        ConsoleLog(std::string("MM error: ") + error);
+        if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
+        if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
+        if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(true);
+    });
+    
+    m_mmClient->setOnQueueRejected([this](const std::string& reason, bool authFailed, bool isBanned) {
+        ConsoleLog(std::string("Queue rejected: ") + reason);
+        if (m_ui && m_ui->findingPanel) m_ui->findingPanel->SetVisible(false);
+        if (m_ui && m_ui->findingTimeLabel) m_ui->findingTimeLabel->SetVisible(false);
+        if (m_ui && m_ui->playButton) m_ui->playButton->SetVisible(true);
+    });
+}
+
+void MainMenuState::SetupReconnectCallbacks() {
+    if (!m_mmClient) return;
+    
+    m_mmClient->setOnActiveGameFound([this](const WorldEditor::Matchmaking::ActiveGameInfo& gameInfo) {
+        LOG_INFO("Active game found! Hero: {}, Server: {}:{}", 
+                 gameInfo.heroName, gameInfo.serverIP, gameInfo.serverPort);
+        ConsoleLog("You have an active game! Click RECONNECT to rejoin.");
+        
+        // Show reconnect overlay
+        ShowReconnectOverlay(gameInfo);
+    });
+    
+    m_mmClient->setOnNoActiveGame([this]() {
+        LOG_INFO("No active game found");
+        // Hide reconnect overlay if visible
+        if (m_ui && m_ui->reconnectOverlay) {
+            m_ui->reconnectOverlay->SetVisible(false);
+        }
+    });
+    
+    m_mmClient->setOnReconnectApproved([this](const std::string& serverIP, u16 port, u8 teamSlot, const std::string& heroName) {
+        LOG_INFO("Reconnect approved! Connecting to {}:{}", serverIP, port);
+        ConsoleLog("Reconnecting to game...");
+        
+        // Hide overlay
+        if (m_ui && m_ui->reconnectOverlay) {
+            m_ui->reconnectOverlay->SetVisible(false);
+        }
+        
+        // Set server target and mark as reconnect
+        if (m_manager) {
+            if (auto* loading = m_manager->GetLoadingState()) {
+                loading->SetServerTarget(serverIP, port);
+                loading->SetReconnect(true);  // Skip hero pick, go directly to InGame
+            }
+            m_manager->ChangeState(EGameState::Loading);
+        }
+    });
+}
+
+void MainMenuState::ShowReconnectOverlay(const WorldEditor::Matchmaking::ActiveGameInfo& gameInfo) {
+    if (!m_ui || !m_ui->root) return;
+    
+    auto& engine = Panorama::CUIEngine::Instance();
+    float sw = engine.GetScreenWidth();
+    float sh = engine.GetScreenHeight();
+    
+    // Create overlay if not exists
+    if (!m_ui->reconnectOverlay) {
+        // Semi-transparent background
+        m_ui->reconnectOverlay = std::make_shared<Panorama::CPanel2D>("ReconnectOverlay");
+        m_ui->reconnectOverlay->GetStyle().width = Panorama::Length::Fill();
+        m_ui->reconnectOverlay->GetStyle().height = Panorama::Length::Fill();
+        m_ui->reconnectOverlay->GetStyle().backgroundColor = Panorama::Color(0.0f, 0.0f, 0.0f, 0.85f);
+        m_ui->root->AddChild(m_ui->reconnectOverlay);
+        
+        // Center panel
+        auto panel = std::make_shared<Panorama::CPanel2D>("ReconnectPanel");
+        panel->GetStyle().width = Panorama::Length::Px(500);
+        panel->GetStyle().height = Panorama::Length::Px(250);
+        panel->GetStyle().backgroundColor = Panorama::Color(0.1f, 0.12f, 0.15f, 0.98f);
+        panel->GetStyle().borderRadius = 8.0f;
+        panel->GetStyle().marginLeft = Panorama::Length::Px((sw - 500) / 2);
+        panel->GetStyle().marginTop = Panorama::Length::Px((sh - 250) / 2);
+        m_ui->reconnectOverlay->AddChild(panel);
+        
+        // Title
+        m_ui->reconnectLabel = std::make_shared<Panorama::CLabel>("GAME IN PROGRESS", "ReconnectTitle");
+        m_ui->reconnectLabel->GetStyle().fontSize = 28.0f;
+        m_ui->reconnectLabel->GetStyle().color = Panorama::Color(0.95f, 0.75f, 0.25f, 1.0f);
+        m_ui->reconnectLabel->GetStyle().marginLeft = Panorama::Length::Px(120);
+        m_ui->reconnectLabel->GetStyle().marginTop = Panorama::Length::Px(30);
+        panel->AddChild(m_ui->reconnectLabel);
+        
+        // Info label
+        m_ui->reconnectInfoLabel = std::make_shared<Panorama::CLabel>("", "ReconnectInfo");
+        m_ui->reconnectInfoLabel->GetStyle().fontSize = 16.0f;
+        m_ui->reconnectInfoLabel->GetStyle().color = Panorama::Color(0.7f, 0.7f, 0.7f, 1.0f);
+        m_ui->reconnectInfoLabel->GetStyle().marginLeft = Panorama::Length::Px(50);
+        m_ui->reconnectInfoLabel->GetStyle().marginTop = Panorama::Length::Px(80);
+        panel->AddChild(m_ui->reconnectInfoLabel);
+        
+        // Reconnect button
+        m_ui->reconnectButton = std::make_shared<Panorama::CButton>("RECONNECT", "ReconnectBtn");
+        m_ui->reconnectButton->GetStyle().width = Panorama::Length::Px(180);
+        m_ui->reconnectButton->GetStyle().height = Panorama::Length::Px(50);
+        m_ui->reconnectButton->GetStyle().backgroundColor = Panorama::Color(0.2f, 0.55f, 0.2f, 1.0f);
+        m_ui->reconnectButton->GetStyle().borderRadius = 4.0f;
+        m_ui->reconnectButton->GetStyle().color = Panorama::Color::White();
+        m_ui->reconnectButton->GetStyle().marginLeft = Panorama::Length::Px(50);
+        m_ui->reconnectButton->GetStyle().marginTop = Panorama::Length::Px(160);
+        m_ui->reconnectButton->SetOnActivate([this]() {
+            OnReconnectClicked();
+        });
+        panel->AddChild(m_ui->reconnectButton);
+        
+        // Abandon button
+        m_ui->abandonButton = std::make_shared<Panorama::CButton>("ABANDON", "AbandonBtn");
+        m_ui->abandonButton->GetStyle().width = Panorama::Length::Px(180);
+        m_ui->abandonButton->GetStyle().height = Panorama::Length::Px(50);
+        m_ui->abandonButton->GetStyle().backgroundColor = Panorama::Color(0.55f, 0.2f, 0.2f, 1.0f);
+        m_ui->abandonButton->GetStyle().borderRadius = 4.0f;
+        m_ui->abandonButton->GetStyle().color = Panorama::Color::White();
+        m_ui->abandonButton->GetStyle().marginLeft = Panorama::Length::Px(270);
+        m_ui->abandonButton->GetStyle().marginTop = Panorama::Length::Px(160);
+        m_ui->abandonButton->SetOnActivate([this]() {
+            OnAbandonClicked();
+        });
+        panel->AddChild(m_ui->abandonButton);
+    }
+    
+    // Update info text
+    if (m_ui->reconnectInfoLabel) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), 
+                 "Hero: %s\nGame Time: %.0f seconds\nDisconnected: %.0f seconds ago",
+                 gameInfo.heroName.c_str(), gameInfo.gameTime, gameInfo.disconnectTime);
+        m_ui->reconnectInfoLabel->SetText(buf);
+    }
+    
+    // Store game info for reconnect
+    m_activeGameInfo = gameInfo;
+    
+    // Show overlay
+    m_ui->reconnectOverlay->SetVisible(true);
+}
+
+void MainMenuState::OnReconnectClicked() {
+    if (!m_mmClient) return;
+    
+    LOG_INFO("Reconnect clicked, requesting reconnect to lobby {}", m_activeGameInfo.lobbyId);
+    m_mmClient->requestReconnect(m_activeGameInfo.lobbyId);
+}
+
+void MainMenuState::OnAbandonClicked() {
+    LOG_INFO("Abandon clicked");
+    ConsoleLog("Game abandoned. You may receive a penalty.");
+    
+    // Hide overlay
+    if (m_ui && m_ui->reconnectOverlay) {
+        m_ui->reconnectOverlay->SetVisible(false);
+    }
+    
+    // TODO: Send abandon notification to coordinator
+    // This would update player stats and potentially apply penalties
 }
 
 } // namespace Game

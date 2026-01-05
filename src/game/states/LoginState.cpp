@@ -48,6 +48,9 @@ LoginState::~LoginState() = default;
 void LoginState::OnEnter() {
     LOG_INFO("LoginState::OnEnter()");
     
+    // Load base stylesheet for login screen
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/base.css");
+    
     CreateUI();
     SetupAuthCallbacks();
     
@@ -63,6 +66,13 @@ void LoginState::OnExit() {
 }
 
 void LoginState::Update(f32 deltaTime) {
+    // Handle deferred UI rebuild (from switch mode button)
+    if (m_needsUIRebuild) {
+        m_needsUIRebuild = false;
+        DestroyUI();
+        CreateUI();
+    }
+    
     auto* authClient = m_manager->GetAuthClient();
     if (authClient) {
         authClient->Update();
@@ -75,7 +85,7 @@ void LoginState::Render() {
     Panorama::CUIEngine::Instance().Render();
 }
 
-// Scaled helper
+// Scaled helper for layout (not fonts)
 static float S(float v) { return v * 1.35f; }
 
 static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, float h, Panorama::Color bg) {
@@ -88,9 +98,10 @@ static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, flo
     return p;
 }
 
-static std::shared_ptr<Panorama::CLabel> L(const std::string& text, float size, Panorama::Color col) {
+// Label helper using CSS classes for font sizes
+static std::shared_ptr<Panorama::CLabel> L(const std::string& text, const std::string& sizeClass, Panorama::Color col) {
     auto l = std::make_shared<Panorama::CLabel>(text, text);
-    l->GetStyle().fontSize = S(size);
+    l->AddClass(sizeClass);  // Use CSS class for font size
     l->GetStyle().color = col;
     return l;
 }
@@ -120,7 +131,7 @@ void LoginState::CreateUI() {
     uiRoot->AddChild(m_ui->root);
     
     // Title at top
-    auto title = L("WORLD EDITOR", 28, white);
+    auto title = L("WORLD EDITOR", "title", white);
     title->GetStyle().marginLeft = Panorama::Length::Px((sw - S(200)) / 2);
     title->GetStyle().marginTop = Panorama::Length::Px(sh * 0.15f);
     m_ui->root->AddChild(title);
@@ -136,13 +147,13 @@ void LoginState::CreateUI() {
     
     // Title label inside box
     std::string titleText = m_isRegistering ? "CREATE ACCOUNT" : "LOGIN";
-    m_ui->titleLabel = L(titleText, 16, white);
+    m_ui->titleLabel = L(titleText, "heading", white);
     m_ui->titleLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->titleLabel->GetStyle().marginTop = Panorama::Length::Px(S(20));
     m_ui->loginBox->AddChild(m_ui->titleLabel);
     
     // Username label
-    auto usernameLabel = L("Username", 10, gray);
+    auto usernameLabel = L("Username", "heading", gray);
     usernameLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     usernameLabel->GetStyle().marginTop = Panorama::Length::Px(S(55));
     m_ui->loginBox->AddChild(usernameLabel);
@@ -155,7 +166,7 @@ void LoginState::CreateUI() {
     m_ui->usernameInput->GetStyle().borderRadius = S(4);
     m_ui->usernameInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->usernameInput->GetStyle().marginTop = Panorama::Length::Px(S(92));
-    m_ui->usernameInput->GetStyle().fontSize = S(12);
+    m_ui->usernameInput->AddClass("heading");  // CSS class for font size
     m_ui->usernameInput->GetStyle().color = white;
     m_ui->usernameInput->SetText(m_username);
     m_ui->usernameInput->SetOnTextChanged([this](const std::string& text) {
@@ -165,7 +176,7 @@ void LoginState::CreateUI() {
     m_ui->loginBox->AddChild(m_ui->usernameInput);
     
     // Password label
-    auto passwordLabel = L("Password", 10, gray);
+    auto passwordLabel = L("Password", "caption", gray);
     passwordLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     passwordLabel->GetStyle().marginTop = Panorama::Length::Px(S(127));
     m_ui->loginBox->AddChild(passwordLabel);
@@ -178,7 +189,7 @@ void LoginState::CreateUI() {
     m_ui->passwordInput->GetStyle().borderRadius = S(4);
     m_ui->passwordInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->passwordInput->GetStyle().marginTop = Panorama::Length::Px(S(164));
-    m_ui->passwordInput->GetStyle().fontSize = S(12);
+    m_ui->passwordInput->AddClass("body");  // CSS class for font size
     m_ui->passwordInput->GetStyle().color = white;
     m_ui->passwordInput->SetPasswordMode(true);
     m_ui->passwordInput->SetText(m_password);
@@ -192,7 +203,7 @@ void LoginState::CreateUI() {
     
     // Confirm password (registration only)
     if (m_isRegistering) {
-        auto confirmLabel = L("Confirm Password", 10, gray);
+        auto confirmLabel = L("Confirm Password", "caption", gray);
         confirmLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
         confirmLabel->GetStyle().marginTop = Panorama::Length::Px(S(201));
         m_ui->loginBox->AddChild(confirmLabel);
@@ -204,7 +215,7 @@ void LoginState::CreateUI() {
         m_ui->confirmPasswordInput->GetStyle().borderRadius = S(4);
         m_ui->confirmPasswordInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
         m_ui->confirmPasswordInput->GetStyle().marginTop = Panorama::Length::Px(S(238));
-        m_ui->confirmPasswordInput->GetStyle().fontSize = S(12);
+        m_ui->confirmPasswordInput->AddClass("body");  // CSS class for font size
         m_ui->confirmPasswordInput->GetStyle().color = white;
         m_ui->confirmPasswordInput->SetPasswordMode(true);
         m_ui->confirmPasswordInput->SetText(m_confirmPassword);
@@ -218,7 +229,7 @@ void LoginState::CreateUI() {
     }
     
     // Error label
-    m_ui->errorLabel = L("", 10, red);
+    m_ui->errorLabel = L("", "caption", red);
     m_ui->errorLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->errorLabel->GetStyle().marginTop = Panorama::Length::Px(S(buttonY - 18));
     m_ui->errorLabel->SetVisible(false);
@@ -233,7 +244,7 @@ void LoginState::CreateUI() {
     m_ui->loginButton->GetStyle().borderRadius = S(4);
     m_ui->loginButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->loginButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 44));
-    m_ui->loginButton->GetStyle().fontSize = S(12);
+    m_ui->loginButton->AddClass("body");  // CSS class for font size (14px)
     m_ui->loginButton->GetStyle().color = white;
     m_ui->loginButton->SetOnActivate([this]() {
         if (m_isRegistering) {
@@ -253,13 +264,13 @@ void LoginState::CreateUI() {
     m_ui->switchModeButton->GetStyle().borderRadius = S(4);
     m_ui->switchModeButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
     m_ui->switchModeButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 75));
-    m_ui->switchModeButton->GetStyle().fontSize = S(10);
+    m_ui->switchModeButton->AddClass("btn-sm");  // CSS class for small button (12px)
     m_ui->switchModeButton->GetStyle().color = white;
     m_ui->switchModeButton->SetOnActivate([this]() {
         m_isRegistering = !m_isRegistering;
         ClearError();
-        DestroyUI();
-        CreateUI();
+        // Defer UI rebuild to next frame to avoid destroying UI from within callback
+        m_needsUIRebuild = true;
     });
     m_ui->loginBox->AddChild(m_ui->switchModeButton);
     
@@ -271,7 +282,7 @@ void LoginState::CreateUI() {
     m_ui->guestButton->GetStyle().borderRadius = S(4);
     m_ui->guestButton->GetStyle().marginLeft = Panorama::Length::Px(S(195));
     m_ui->guestButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 75));
-    m_ui->guestButton->GetStyle().fontSize = S(10);
+    m_ui->guestButton->AddClass("btn-sm");  // CSS class for small button (12px)
     m_ui->guestButton->GetStyle().color = white;
     m_ui->guestButton->SetOnActivate([this]() { OnGuestClicked(); });
     m_ui->loginBox->AddChild(m_ui->guestButton);
@@ -281,7 +292,7 @@ void LoginState::CreateUI() {
     m_ui->loadingOverlay->SetVisible(false);
     m_ui->root->AddChild(m_ui->loadingOverlay);
     
-    m_ui->loadingLabel = L("Connecting...", 14, white);
+    m_ui->loadingLabel = L("Connecting...", "subheading", white);
     m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px((sw - S(100)) / 2);
     m_ui->loadingLabel->GetStyle().marginTop = Panorama::Length::Px(sh / 2);
     m_ui->loadingOverlay->AddChild(m_ui->loadingLabel);
@@ -290,6 +301,10 @@ void LoginState::CreateUI() {
 void LoginState::DestroyUI() {
     if (m_ui->root) {
         auto& engine = Panorama::CUIEngine::Instance();
+        
+        // Clear all input state to avoid dangling pointers
+        engine.ClearAllInputState();
+        
         auto* uiRoot = engine.GetRoot();
         if (uiRoot) {
             uiRoot->RemoveChild(m_ui->root.get());

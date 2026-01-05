@@ -1,9 +1,11 @@
 #include "CUIEngine.h"
 #include "CStyleSheet.h"
 #include "CLayoutFile.h"
+#include "CUITextSystem.h"
 #include "DirectXRenderer.h"
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 
 namespace Panorama {
 
@@ -27,6 +29,16 @@ bool CUIEngine::Initialize(ID3D12Device* device, DirectXRenderer* renderer, cons
     m_root->GetStyle().height = Length::Px(config.screenHeight);
     
     m_globalStylesheet = std::make_shared<CStyleSheet>();
+
+    // Auto-load base stylesheet if present (HTML/CSS-like workflow).
+    // Users can override by calling LoadStyleSheet() with their own file.
+    {
+        std::filesystem::path base = std::filesystem::path("resources") / "styles" / "base.css";
+        std::error_code ec;
+        if (std::filesystem::exists(base, ec) && !ec) {
+            LoadStyleSheet(base.u8string());
+        }
+    }
     
     m_initialized = true;
     LOG_INFO("CUIEngine initialized (DX12 mode)");
@@ -58,8 +70,13 @@ std::shared_ptr<CPanel2D> CUIEngine::CreatePanelByType(const std::string& type, 
 
 std::shared_ptr<CPanel2D> CUIEngine::LoadLayout(const std::string& path, CPanel2D* parent) {
     auto panel = CLayoutManager::Instance().CreatePanelFromLayout(path);
-    if (panel && parent) {
-        parent->AddChild(panel);
+    if (panel) {
+        // Apply any stored text attributes AFTER the element hierarchy is created.
+        // This keeps element creation and text creation independent.
+        CUITextSystem::Instance().ApplyTextRecursive(panel.get());
+        if (parent) {
+            parent->AddChild(panel);
+        }
     }
     return panel;
 }
@@ -72,15 +89,16 @@ void CUIEngine::LoadLayoutAsync(const std::string& path, CPanel2D* parent,
 }
 
 void CUIEngine::LoadStyleSheet(const std::string& path) {
-    if (m_globalStylesheet) {
-        m_globalStylesheet->LoadFromFile(path);
-    }
+    // Route all global styling through CStyleManager so panels compute styles consistently.
+    LOG_INFO("CUIEngine::LoadStyleSheet('{}') cwd='{}'",
+        path, std::filesystem::current_path().u8string());
+    CStyleManager::Instance().LoadGlobalStyles(path);
+    if (m_root) m_root->InvalidateStyle();
 }
 
 void CUIEngine::ApplyGlobalStyles() {
-    if (m_root && m_globalStylesheet) {
-        m_root->ApplyStyles(m_globalStylesheet.get());
-    }
+    // Styles are applied lazily during layout; force invalidation if caller wants an update now.
+    if (m_root) m_root->InvalidateStyle();
 }
 
 CPanel2D* CUIEngine::FindPanelByID(const std::string& id) {
@@ -105,6 +123,15 @@ void CUIEngine::SetFocus(CPanel2D* panel) {
 
 void CUIEngine::ClearFocus() {
     SetFocus(nullptr);
+}
+
+void CUIEngine::ClearAllInputState() {
+    if (m_focusedPanel) {
+        m_focusedPanel->RemoveFocus();
+        m_focusedPanel = nullptr;
+    }
+    m_hoveredPanel = nullptr;
+    m_pressedPanel = nullptr;
 }
 
 void CUIEngine::Update(f32 deltaTime) {

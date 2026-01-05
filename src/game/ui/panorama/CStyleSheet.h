@@ -139,16 +139,30 @@ struct StyleProperties {
 
 // ============ Style Rule ============
 
+enum class SelectorCombinator {
+    None,
+    Descendant, // whitespace: "A B"
+    Child       // ">": "A > B"
+};
+
+// One compound selector: Element#id.class1.class2:pseudo
+struct SelectorCompound {
+    std::string element;                 // Panel type: "Button", "Label"
+    std::string id;                      // #my-panel
+    std::vector<std::string> classes;    // .my-class
+    std::string pseudoClass;             // :hover, :active, :focus, :disabled, :selected
+};
+
+// Selector represented as steps from right-to-left:
+// steps[0] matches current panel, then each next step matches an ancestor/parent based on combinatorToPrev.
+struct SelectorStep {
+    SelectorCompound compound;
+    SelectorCombinator combinatorToPrev = SelectorCombinator::None;
+};
+
 struct StyleSelector {
-    std::string element;           // Panel type: "Button", "Label"
-    std::string id;                // #my-panel
-    std::vector<std::string> classes;  // .my-class
-    std::string pseudoClass;       // :hover, :active, :focus, :disabled
-    std::string pseudoElement;     // ::before, ::after
-    
-    // Combinators
-    std::string descendant;        // "Panel Label" (space)
-    std::string child;             // "Panel > Label" (>)
+    std::vector<SelectorStep> steps;
+    std::string pseudoElement;     // ::before, ::after (reserved)
     
     i32 GetSpecificity() const;
     bool Matches(const class CPanel2D* panel) const;

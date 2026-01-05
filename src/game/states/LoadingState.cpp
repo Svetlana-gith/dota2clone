@@ -5,6 +5,20 @@
 #include "../ui/panorama/GameEvents.h"
 #include "../../client/ClientWorld.h"
 #include "../../server/ServerWorld.h"
+#include "../../world/World.h"
+#include "../../world/WorldLegacy.h"
+#include "../../world/Components.h"
+#include "../../world/CreepSystem.h"
+#include "../../world/CreepSpawnSystem.h"
+#include "../../world/HeroSystem.h"
+#include "../../world/TowerSystem.h"
+#include "../../world/ProjectileSystem.h"
+#include "../../world/CollisionSystem.h"
+#include "../../serialization/MapIO.h"
+#include "../../renderer/DirectXRenderer.h"
+
+// External renderer from GameMain.cpp
+extern DirectXRenderer* g_renderer;
 
 namespace Game {
 
@@ -32,8 +46,9 @@ void LoadingState::OnEnter() {
     m_progress = 0.0f;
     m_statusText = "Initializing...";
     m_worldsLoaded = false;
+    // Note: m_isReconnect is set externally before OnEnter, don't reset it here
     CreateUI();
-    LOG_INFO("LoadingState UI created");
+    LOG_INFO("LoadingState UI created, isReconnect={}", m_isReconnect);
     ConsoleLog("Loading UI created");
 }
 
@@ -165,6 +180,21 @@ void LoadingState::Update(f32 deltaTime) {
         ConsoleLog("Creating ServerWorld...");
         m_statusText = "Initializing game logic...";
         m_serverWorld = std::make_unique<WorldEditor::ServerWorld>();
+        
+        // Add all game systems
+        auto& entityManager = m_serverWorld->getEntityManager();
+        
+        // Core MOBA systems
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::HeroSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::CreepSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::CreepSpawnSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::TowerSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::ProjectileSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<WorldEditor::CollisionSystem>(entityManager));
+        
+        LOG_INFO("LoadingState: All game systems added");
+        ConsoleLog("Game systems initialized: Hero, Creep, Tower, Projectile, Collision");
+        
         m_progress = 0.2f;
         LOG_INFO("LoadingState: ServerWorld created");
         ConsoleLog("ServerWorld created [20%]");
@@ -181,9 +211,54 @@ void LoadingState::Update(f32 deltaTime) {
         ConsoleLog("ClientWorld created [40%]");
     }
     
-    // === PHASE 3: Load Map (40-70%) ===
+    // === PHASE 3: Load Map from scene.json (40-70%) ===
     else if (m_progress >= 0.4f && m_progress < 0.7f && !m_worldsLoaded) {
-        m_statusText = "Loading map: " + (m_mapName.empty() ? "Default Map" : m_mapName);
+        m_statusText = "Loading map: " + (m_mapName.empty() ? "scene" : m_mapName);
+        
+        // Load map from scene.json into a World object for rendering
+        if (g_renderer && g_renderer->GetDevice()) {
+            m_gameWorld = std::make_unique<WorldEditor::World>(g_renderer->GetDevice());
+            
+            // Connect lighting system to render system (like editor does)
+            auto* renderSystem = static_cast<WorldEditor::RenderSystem*>(m_gameWorld->getSystem("RenderSystem"));
+            if (renderSystem) {
+                if (g_renderer->GetLightingSystem()) {
+                    renderSystem->setLightingSystem(g_renderer->GetLightingSystem());
+                    LOG_INFO("LoadingState: LightingSystem connected to RenderSystem");
+                }
+                if (g_renderer->GetWireframeGrid()) {
+                    renderSystem->setWireframeGrid(g_renderer->GetWireframeGrid());
+                }
+            }
+            
+            // Try to load the map file (check multiple paths)
+            std::string mapName = m_mapName.empty() ? "scene" : m_mapName;
+            std::vector<std::string> searchPaths = {
+                "maps/" + mapName + ".json",                    // Relative to exe
+                "build/bin/Debug/maps/" + mapName + ".json",    // From workspace root
+                "../maps/" + mapName + ".json"                  // One level up
+            };
+            
+            bool loaded = false;
+            for (const auto& mapPath : searchPaths) {
+                String loadError;
+                if (WorldEditor::MapIO::load(*m_gameWorld, mapPath, &loadError)) {
+                    LOG_INFO("LoadingState: Map loaded from {}", mapPath);
+                    ConsoleLog("Map loaded: " + mapPath + " (" + std::to_string(m_gameWorld->getEntityCount()) + " entities)");
+                    loaded = true;
+                    break;
+                }
+            }
+            
+            if (!loaded) {
+                LOG_WARN("LoadingState: Failed to load map from any path");
+                ConsoleLog("WARNING: Map not found, using empty world");
+            }
+        } else {
+            LOG_WARN("LoadingState: No renderer available for World creation");
+        }
+        
+        // Also create game entities (heroes, dynamic objects)
         LoadGameWorld();
         m_worldsLoaded = true;
         m_progress = 0.7f;
@@ -196,54 +271,153 @@ void LoadingState::Update(f32 deltaTime) {
         if (m_progress > 1.0f) m_progress = 1.0f;
     }
     
-    // === Transition to InGame when complete ===
+    // === Transition when complete ===
     if (IsLoadingComplete() && m_worldsLoaded) {
-        LOG_INFO("LoadingState: Loading complete, transitioning to InGame");
+        LOG_INFO("LoadingState: Loading complete");
         ConsoleLog("Loading complete [100%]");
         
         Panorama::CGameEventData data;
         Panorama::GameEvents_Fire("Loading_Complete", data);
         
-        // Transfer worlds to InGameState BEFORE changing state
-        auto* inGameState = m_manager->GetInGameState();
-        if (inGameState) {
-            LOG_INFO("LoadingState: Transferring worlds to InGameState");
-            ConsoleLog("Transferring worlds to InGameState...");
-            inGameState->SetWorlds(std::move(m_clientWorld), std::move(m_serverWorld));
+        if (m_isReconnect) {
+            // Reconnecting to existing game - go directly to InGame
+            LOG_INFO("LoadingState: Reconnect mode - transitioning to InGame");
+            ConsoleLog("Reconnecting to game...");
             
-            // Connect to server (provided by matchmaking)
-            LOG_INFO("LoadingState: Connecting to server {}:{}", m_serverIp, m_serverPort);
-            ConsoleLog("Connecting to server " + m_serverIp + ":" + std::to_string(m_serverPort) + "...");
-            inGameState->ConnectToServer(m_serverIp.c_str(), m_serverPort);
+            auto* inGameState = m_manager->GetInGameState();
+            if (inGameState) {
+                inGameState->SetWorlds(std::move(m_clientWorld), std::move(m_serverWorld), std::move(m_gameWorld));
+            }
+            
+            m_manager->ChangeState(EGameState::InGame);
+        } else {
+            // Normal flow - go to HeroPick
+            LOG_INFO("LoadingState: Normal mode - transitioning to HeroPick");
+            ConsoleLog("Entering hero pick phase...");
+            
+            auto* heroPickState = m_manager->GetHeroPickState();
+            if (heroPickState) {
+                heroPickState->SetWorlds(std::move(m_clientWorld), std::move(m_serverWorld));
+            }
+            
+            // Store gameWorld for later transfer to InGameState
+            // HeroPickState will need to pass it along
+            auto* inGameState = m_manager->GetInGameState();
+            if (inGameState && m_gameWorld) {
+                inGameState->SetWorlds(nullptr, nullptr, std::move(m_gameWorld));
+            }
+            
+            m_manager->ChangeState(EGameState::HeroPick);
         }
-        
-        // Now change state
-        m_manager->ChangeState(EGameState::InGame);
     }
 }
 
 void LoadingState::LoadGameWorld() {
     if (!m_serverWorld || !m_clientWorld) return;
     
-    // Initialize game world
-    // ServerWorld handles game logic (heroes, creeps, towers, etc.)
-    // ClientWorld handles rendering and client-side prediction
+    LOG_INFO("Creating game world...");
+    ConsoleLog("Creating game world...");
     
-    // Create a simple test terrain
-    // TODO: Load from file when map editor is ready
-    LOG_INFO("Creating test terrain...");
+    auto& entityManager = m_serverWorld->getEntityManager();
     
-    // Create terrain entity in server world
-    auto terrainEntity = m_serverWorld->createEntity("Terrain");
-    // TODO: Add TerrainComponent and MeshComponent
+    // === Create Player Hero ===
+    auto heroEntity = m_serverWorld->createEntity("PlayerHero");
     
-    // Start the game (creates heroes, spawns creeps, etc.)
+    WorldEditor::TransformComponent heroTransform;
+    heroTransform.position = Vec3(0.0f, 0.0f, 0.0f);
+    heroTransform.rotation = Quat(1.0f, 0.0f, 0.0f, 0.0f);
+    heroTransform.scale = Vec3(1.0f);
+    entityManager.addComponent<WorldEditor::TransformComponent>(heroEntity, heroTransform);
+    
+    WorldEditor::HeroComponent heroComp;
+    heroComp.heroName = "TestHero";
+    heroComp.level = 1;
+    heroComp.experience = 0.0f;
+    heroComp.currentHealth = 600.0f;
+    heroComp.maxHealth = 600.0f;
+    heroComp.currentMana = 300.0f;
+    heroComp.maxMana = 300.0f;
+    heroComp.damage = 50.0f;
+    heroComp.attackSpeed = 100.0f;
+    heroComp.moveSpeed = 300.0f;
+    heroComp.teamId = 1;  // Radiant
+    heroComp.isPlayerControlled = true;
+    entityManager.addComponent<WorldEditor::HeroComponent>(heroEntity, heroComp);
+    
+    LOG_INFO("Created player hero entity {}", static_cast<u64>(heroEntity));
+    
+    // === Create Towers ===
+    // Radiant towers
+    CreateTower(Vec3(-30.0f, 0.0f, -30.0f), 1, "RadiantTower1");
+    CreateTower(Vec3(-50.0f, 0.0f, -50.0f), 1, "RadiantTower2");
+    
+    // Dire towers
+    CreateTower(Vec3(30.0f, 0.0f, 30.0f), 2, "DireTower1");
+    CreateTower(Vec3(50.0f, 0.0f, 50.0f), 2, "DireTower2");
+    
+    // === Create Test Creeps ===
+    CreateCreep(Vec3(10.0f, 0.0f, 10.0f), 2, "DireCreep1");
+    CreateCreep(Vec3(12.0f, 0.0f, 10.0f), 2, "DireCreep2");
+    CreateCreep(Vec3(14.0f, 0.0f, 10.0f), 2, "DireCreep3");
+    
+    // Start the game (activates systems, starts creep spawning)
     m_serverWorld->startGame();
     
     LOG_INFO("Game world loaded with {} entities", m_serverWorld->getEntityCount());
+    ConsoleLog("World created: " + std::to_string(m_serverWorld->getEntityCount()) + " entities");
+}
+
+void LoadingState::CreateTower(const Vec3& pos, int team, const std::string& name) {
+    auto& entityManager = m_serverWorld->getEntityManager();
+    auto entity = m_serverWorld->createEntity(name);
     
-    // TODO: Load map terrain and objects from file
-    // TODO: Initialize client-side rendering resources
+    WorldEditor::TransformComponent transform;
+    transform.position = pos;
+    transform.rotation = Quat(1.0f, 0.0f, 0.0f, 0.0f);
+    transform.scale = Vec3(1.0f);
+    entityManager.addComponent<WorldEditor::TransformComponent>(entity, transform);
+    
+    // Use ObjectComponent with Tower type (as used in the editor)
+    WorldEditor::ObjectComponent towerObj;
+    towerObj.type = WorldEditor::ObjectType::Tower;
+    towerObj.teamId = team;
+    towerObj.attackRange = 20.0f;
+    towerObj.attackDamage = 150.0f;
+    towerObj.attackSpeed = 1.0f;
+    entityManager.addComponent<WorldEditor::ObjectComponent>(entity, towerObj);
+    
+    WorldEditor::HealthComponent health;
+    health.maxHealth = 2000.0f;
+    health.currentHealth = 2000.0f;
+    health.armor = 10.0f;
+    entityManager.addComponent<WorldEditor::HealthComponent>(entity, health);
+    
+    LOG_INFO("Created tower '{}' at ({}, {}, {})", name, pos.x, pos.y, pos.z);
+}
+
+void LoadingState::CreateCreep(const Vec3& pos, int team, const std::string& name) {
+    auto& entityManager = m_serverWorld->getEntityManager();
+    auto entity = m_serverWorld->createEntity(name);
+    
+    WorldEditor::TransformComponent transform;
+    transform.position = pos;
+    transform.rotation = Quat(1.0f, 0.0f, 0.0f, 0.0f);
+    transform.scale = Vec3(1.0f);
+    entityManager.addComponent<WorldEditor::TransformComponent>(entity, transform);
+    
+    WorldEditor::CreepComponent creep;
+    creep.teamId = team;
+    creep.maxHealth = 550.0f;
+    creep.currentHealth = 550.0f;
+    creep.damage = 20.0f;
+    creep.attackRange = 5.0f;
+    creep.attackSpeed = 1.0f;
+    creep.moveSpeed = 5.0f;
+    creep.lane = WorldEditor::CreepLane::Middle;
+    creep.type = WorldEditor::CreepType::Melee;
+    entityManager.addComponent<WorldEditor::CreepComponent>(entity, creep);
+    
+    LOG_INFO("Created creep '{}' at ({}, {}, {})", name, pos.x, pos.y, pos.z);
 }
 
 void LoadingState::Render() {
@@ -261,6 +435,12 @@ void LoadingState::SetLoadingTarget(const std::string& mapName) {
 void LoadingState::SetServerTarget(const std::string& serverIp, u16 serverPort) {
     if (!serverIp.empty()) m_serverIp = serverIp;
     if (serverPort != 0) m_serverPort = serverPort;
+    
+    // Also save to GameStateManager for shared access across states
+    if (m_manager) {
+        m_manager->SetGameServerTarget(m_serverIp, m_serverPort);
+        LOG_INFO("LoadingState: Set game server target to {}:{}", m_serverIp, m_serverPort);
+    }
 }
 
 void LoadingState::SetProgress(f32 progress) {

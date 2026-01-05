@@ -31,6 +31,14 @@ enum class PacketType : u8 {
     ClientInput = 10,
     WorldSnapshot = 11,
     
+    // Hero Pick Phase
+    HeroPick = 12,           // Client -> Server: player picks a hero
+    HeroPickBroadcast = 13,  // Server -> All: broadcast who picked what
+    AllHeroesPicked = 14,    // Server -> All: all players picked, start game
+    HeroPickTimer = 15,      // Server -> All: sync pick timer
+    TeamAssignment = 16,     // Server -> Client: your team slot assignment
+    PlayerInfo = 17,         // Server -> All: broadcast player info (username, team)
+    
     // Reliability
     Ping = 20,
     Pong = 21,
@@ -47,6 +55,51 @@ struct PacketHeader {
     u16 payloadSize;
     
     static constexpr size_t SIZE = sizeof(PacketType) + sizeof(SequenceNumber) + sizeof(u16);
+};
+
+// ============ Hero Pick Payloads ============
+
+struct HeroPickPayload {
+    u64 playerId;
+    char heroName[32];  // Hero name string
+    u8 teamSlot;        // 0-4 for Radiant, 5-9 for Dire
+};
+
+struct HeroPickBroadcastPayload {
+    u64 playerId;
+    char heroName[32];
+    u8 teamSlot;
+    u8 isConfirmed;     // 1 = confirmed pick, 0 = just hovering
+};
+
+struct AllHeroesPickedPayload {
+    u8 playerCount;
+    f32 gameStartDelay;  // Seconds until game starts
+};
+
+struct HeroPickTimerPayload {
+    f32 timeRemaining;   // Seconds remaining in pick phase
+    u8 currentPhase;     // 0 = picking, 1 = all picked, 2 = starting
+};
+
+struct TeamAssignmentPayload {
+    u8 teamSlot;         // 0-4 for Radiant, 5-9 for Dire
+    u8 teamId;           // 0 = Radiant, 1 = Dire
+    char username[32];   // Player's username
+};
+
+// Broadcast player info to all clients (who's in the game)
+struct PlayerInfoPayload {
+    u64 playerId;
+    u8 teamSlot;
+    u8 teamId;
+    char username[32];
+};
+
+// Connection request with username and account ID
+struct ConnectionRequestPayload {
+    char username[32];
+    u64 accountId;  // Auth account ID for reconnect support
 };
 
 // ============ Network Address ============

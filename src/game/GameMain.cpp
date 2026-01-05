@@ -22,6 +22,8 @@
 #include "ui/panorama/CUIEngine.h"
 #include "../network/NetworkCommon.h"
 #include "../renderer/DirectXRenderer.h"
+#include "../world/World.h"
+#include "../serialization/MapIO.h"
 
 #pragma comment(lib, "d3d11.lib")
 
@@ -42,6 +44,9 @@ static void Log(const char* msg) {
 // Window and DirectX 12 globals
 HWND g_hWnd = nullptr;
 DirectXRenderer* g_renderer = nullptr;
+
+// Game World (for map rendering)
+WorldEditor::World* g_gameWorld = nullptr;
 
 int g_screenWidth = 0;
 int g_screenHeight = 0;
@@ -357,10 +362,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Toggle fullscreen would go here
                 return 0;
             }
-            // Escape to exit
+            // ESC handling depends on current state
             if (wParam == VK_ESCAPE) {
-                g_running = false;
-                return 0;
+                auto currentState = gameState.GetCurrentStateType();
+                // In game states, ESC opens pause menu (handled by state)
+                // In menu states, ESC exits the game
+                if (currentState == Game::EGameState::MainMenu || 
+                    currentState == Game::EGameState::Login) {
+                    g_running = false;
+                    return 0;
+                }
+                // Otherwise let the state handle it (pause menu, etc.)
             }
             gameState.OnKeyDown((int)wParam);
             return 0;

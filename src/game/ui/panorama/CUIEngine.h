@@ -74,6 +74,7 @@ public:
     // ============ Focus Management ============
     void SetFocus(CPanel2D* panel);
     void ClearFocus();
+    void ClearAllInputState();  // Clear focus, hover, pressed - call before destroying UI
     
     // ============ Update & Render ============
     void Update(f32 deltaTime);
