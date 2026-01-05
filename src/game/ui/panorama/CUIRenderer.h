@@ -84,6 +84,9 @@ public:
                    f32 width, f32 height);
     void Shutdown();
     
+    // Set the current render target view (must be called before rendering)
+    void SetRenderTarget(D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle);
+    
     // Frame management
     void BeginFrame();
     void EndFrame();
@@ -163,6 +166,10 @@ private:
     ID3D12CommandQueue* m_commandQueue = nullptr;
     ID3D12GraphicsCommandList* m_commandList = nullptr;
     ID3D12DescriptorHeap* m_srvHeap = nullptr;
+    
+    // Current render target (set by SetRenderTarget)
+    D3D12_CPU_DESCRIPTOR_HANDLE m_currentRtvHandle = {};
+    bool m_hasRenderTarget = false;
     
     f32 m_screenWidth = 1920.0f;
     f32 m_screenHeight = 1080.0f;

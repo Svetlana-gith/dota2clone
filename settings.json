@@ -1,0 +1,50 @@
+{
+  "audio": {
+    "announcerVolume": 1.0,
+    "masterVolume": 1.0,
+    "musicVolume": 0.699999988079071,
+    "muteWhenMinimized": false,
+    "sfxVolume": 1.0,
+    "voiceVolume": 1.0
+  },
+  "controls": {
+    "autoAttack": false,
+    "cameraEdgePan": true,
+    "cameraPanSpeed": 1.0345454216003418,
+    "invertCameraY": false,
+    "keyAbility1": 81,
+    "keyAbility2": 87,
+    "keyAbility3": 69,
+    "keyAbility4": 82,
+    "keyAttack": 65,
+    "keyHold": 72,
+    "keyMove": 77,
+    "keyOpenShop": 66,
+    "keyScoreboard": 9,
+    "keyStop": 83,
+    "mouseSensitivity": 1.0,
+    "quickCast": true
+  },
+  "game": {
+    "autoSelectSummons": false,
+    "language": "en",
+    "minimapOnRight": true,
+    "minimapScale": 1.350000023841858,
+    "showDamageNumbers": false,
+    "showHealthBars": false,
+    "showManaBars": true,
+    "unitQueryOverride": false
+  },
+  "video": {
+    "antiAliasing": true,
+    "effectsQuality": 2,
+    "maxFPS": 0,
+    "renderScale": 1.0,
+    "resolutionHeight": 1080,
+    "resolutionWidth": 1920,
+    "shadowQuality": 2,
+    "textureQuality": 2,
+    "vsync": false,
+    "windowMode": 1
+  }
+}

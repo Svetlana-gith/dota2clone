@@ -179,18 +179,18 @@ void LoadingState::Update(f32 deltaTime) {
         LOG_INFO("LoadingState: Creating ServerWorld...");
         ConsoleLog("Creating ServerWorld...");
         m_statusText = "Initializing game logic...";
-        m_serverWorld = std::make_unique<WorldEditor::ServerWorld>();
+        m_serverWorld = std::make_unique<::WorldEditor::ServerWorld>();
         
         // Add all game systems
         auto& entityManager = m_serverWorld->getEntityManager();
         
         // Core MOBA systems
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::HeroSystem>(entityManager));
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::CreepSystem>(entityManager));
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::CreepSpawnSystem>(entityManager));
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::TowerSystem>(entityManager));
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::ProjectileSystem>(entityManager));
-        m_serverWorld->addSystem(std::make_unique<WorldEditor::CollisionSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::HeroSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::CreepSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::CreepSpawnSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::TowerSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::ProjectileSystem>(entityManager));
+        m_serverWorld->addSystem(std::make_unique<::WorldEditor::CollisionSystem>(entityManager));
         
         LOG_INFO("LoadingState: All game systems added");
         ConsoleLog("Game systems initialized: Hero, Creep, Tower, Projectile, Collision");
@@ -205,7 +205,7 @@ void LoadingState::Update(f32 deltaTime) {
         LOG_INFO("LoadingState: Creating ClientWorld...");
         ConsoleLog("Creating ClientWorld...");
         m_statusText = "Initializing renderer...";
-        m_clientWorld = std::make_unique<WorldEditor::ClientWorld>();
+        m_clientWorld = std::make_unique<::WorldEditor::ClientWorld>();
         m_progress = 0.4f;
         LOG_INFO("LoadingState: ClientWorld created");
         ConsoleLog("ClientWorld created [40%]");
@@ -217,10 +217,10 @@ void LoadingState::Update(f32 deltaTime) {
         
         // Load map from scene.json into a World object for rendering
         if (g_renderer && g_renderer->GetDevice()) {
-            m_gameWorld = std::make_unique<WorldEditor::World>(g_renderer->GetDevice());
+            m_gameWorld = std::make_unique<::WorldEditor::World>(g_renderer->GetDevice());
             
             // Connect lighting system to render system (like editor does)
-            auto* renderSystem = static_cast<WorldEditor::RenderSystem*>(m_gameWorld->getSystem("RenderSystem"));
+            auto* renderSystem = static_cast<::WorldEditor::RenderSystem*>(m_gameWorld->getSystem("RenderSystem"));
             if (renderSystem) {
                 if (g_renderer->GetLightingSystem()) {
                     renderSystem->setLightingSystem(g_renderer->GetLightingSystem());
@@ -242,7 +242,7 @@ void LoadingState::Update(f32 deltaTime) {
             bool loaded = false;
             for (const auto& mapPath : searchPaths) {
                 String loadError;
-                if (WorldEditor::MapIO::load(*m_gameWorld, mapPath, &loadError)) {
+                if (::WorldEditor::MapIO::load(*m_gameWorld, mapPath, &loadError)) {
                     LOG_INFO("LoadingState: Map loaded from {}", mapPath);
                     ConsoleLog("Map loaded: " + mapPath + " (" + std::to_string(m_gameWorld->getEntityCount()) + " entities)");
                     loaded = true;

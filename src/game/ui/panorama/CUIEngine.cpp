@@ -157,6 +157,11 @@ void CUIEngine::Render() {
     Rect2D screenBounds = {0, 0, m_config.screenWidth, m_config.screenHeight};
     m_root->PerformLayout(screenBounds);
     
+    // Set render target for UI renderer (needed after pipeline state changes)
+    if (m_dxRenderer) {
+        m_renderer->SetRenderTarget(m_dxRenderer->GetCurrentRenderTargetView());
+    }
+    
     // Render pass
     m_renderer->BeginFrame();
     RenderPanelRecursive(m_root.get());

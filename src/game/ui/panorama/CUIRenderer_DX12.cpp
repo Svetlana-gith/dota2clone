@@ -109,6 +109,11 @@ void CUIRenderer::SetScreenSize(f32 width, f32 height) {
     m_screenHeight = height;
 }
 
+void CUIRenderer::SetRenderTarget(D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle) {
+    m_currentRtvHandle = rtvHandle;
+    m_hasRenderTarget = true;
+}
+
 void CUIRenderer::BeginFrame() {
     // Rotate to next frame's vertex buffer
     m_currentFrameIndex = (m_currentFrameIndex + 1) % kFrameCount;
@@ -147,7 +152,30 @@ void CUIRenderer::Flush() {
 }
 
 void CUIRenderer::FlushBatch() {
-    if (m_vertices.empty() || !m_commandList || !m_pipelineState) return;
+    if (m_vertices.empty() || !m_commandList || !m_pipelineState) {
+        // Log why we're skipping
+        static int skipCount = 0;
+        if (skipCount < 5) {
+            LOG_INFO("FlushBatch skipped: vertices={} cmdList={} pso={}", 
+                m_vertices.size(), (void*)m_commandList, (void*)m_pipelineState.Get());
+            skipCount++;
+        }
+        return;
+    }
+    
+    // Log first few flushes
+    static int flushCount = 0;
+    if (flushCount < 5) {
+        // Log first vertex color for debugging
+        if (!m_vertices.empty()) {
+            auto& v = m_vertices[0];
+            LOG_INFO("FlushBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
+                m_vertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
+        } else {
+            LOG_INFO("FlushBatch: {} vertices, frame {}", m_vertices.size(), m_currentFrameIndex);
+        }
+        flushCount++;
+    }
     
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
@@ -167,6 +195,11 @@ void CUIRenderer::FlushBatch() {
     // Set pipeline state
     m_commandList->SetPipelineState(m_pipelineState.Get());
     m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+    
+    // Re-bind render target after pipeline state change
+    if (m_hasRenderTarget) {
+        m_commandList->OMSetRenderTargets(1, &m_currentRtvHandle, FALSE, nullptr);
+    }
     
     // Set root constants
     float screenConstants[4] = { m_screenWidth, m_screenHeight, 0, 0 };
@@ -200,6 +233,19 @@ void CUIRenderer::FlushBatch() {
 void CUIRenderer::FlushTextBatch() {
     if (m_textVertices.empty() || !m_commandList || !m_pipelineStateTextured) return;
     if (!m_currentFont) return;
+
+    // Log text batch flush
+    static int textFlushCount = 0;
+    if (textFlushCount < 5) {
+        if (!m_textVertices.empty()) {
+            auto& v = m_textVertices[0];
+            LOG_INFO("FlushTextBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
+                m_textVertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
+        } else {
+            LOG_INFO("FlushTextBatch: {} vertices, frame {}", m_textVertices.size(), m_currentFrameIndex);
+        }
+        textFlushCount++;
+    }
 
     // Log EVERY flush to diagnose batching issues
     // Use current frame's vertex buffer
@@ -235,6 +281,11 @@ void CUIRenderer::FlushTextBatch() {
     // Set textured pipeline state
     m_commandList->SetPipelineState(m_pipelineStateTextured.Get());
     m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+    
+    // Re-bind render target after pipeline state change
+    if (m_hasRenderTarget) {
+        m_commandList->OMSetRenderTargets(1, &m_currentRtvHandle, FALSE, nullptr);
+    }
     
     // Set root constants
     float screenConstants[4] = { m_screenWidth, m_screenHeight, 0, 0 };

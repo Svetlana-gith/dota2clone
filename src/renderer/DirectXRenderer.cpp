@@ -5,6 +5,7 @@
 #include "WireframeGrid.h"
 #include <dxgidebug.h>
 #include <iostream>
+#include <spdlog/spdlog.h>
 
 DirectXRenderer::DirectXRenderer()
     : m_width(0)
@@ -368,6 +369,14 @@ void DirectXRenderer::BeginFrame() {
 }
 
 void DirectXRenderer::BeginSwapchainPass(float clearColor[4]) {
+    // Log first few calls
+    static int passCount = 0;
+    passCount++;
+    if (passCount <= 5) {
+        spdlog::info("BeginSwapchainPass: frameIndex={}, clearColor=({},{},{},{})", 
+            m_frameIndex, clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+    }
+    
     // Transition swapchain buffer to RT
     D3D12_RESOURCE_BARRIER barrier = {};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -570,6 +579,13 @@ void DirectXRenderer::EndFrame() {
 }
 
 bool DirectXRenderer::Present() {
+    // Log first few presents
+    static int presentCount = 0;
+    presentCount++;
+    if (presentCount <= 5) {
+        spdlog::info("DirectXRenderer::Present() call #{}, frameIndex={}", presentCount, m_frameIndex);
+    }
+    
     // Выполняем command list
     ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
@@ -579,14 +595,20 @@ bool DirectXRenderer::Present() {
     if (FAILED(hr)) {
         // Log the error but don't throw exception for present failures
         // These are often non-fatal (device removed, window closed, etc.)
+        spdlog::error("Present failed with HRESULT: 0x{:08X}", (unsigned)hr);
         std::cerr << "Present failed with HRESULT: 0x" << std::hex << hr << std::dec << std::endl;
         if (m_device) {
             const HRESULT removed = m_device->GetDeviceRemovedReason();
             if (FAILED(removed)) {
+                spdlog::error("DeviceRemovedReason: 0x{:08X}", (unsigned)removed);
                 std::cerr << "DeviceRemovedReason: 0x" << std::hex << removed << std::dec << std::endl;
             }
         }
         return false;
+    }
+    
+    if (presentCount <= 5) {
+        spdlog::info("Present() succeeded");
     }
 
     // Сигнализируем fence для синхронизации
@@ -632,6 +654,22 @@ bool DirectXRenderer::CreateDevice() {
     // Создаем DXGI factory
     ComPtr<IDXGIFactory4> factory;
     DX_CHECK(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+
+    // FORCE WARP: Use software renderer for testing on problematic GPUs (Intel HD 4600)
+    // Set to true to bypass hardware GPU and use CPU rendering
+    const bool forceWarp = true;
+    
+    if (forceWarp) {
+        ComPtr<IDXGIAdapter> warpAdapter;
+        if (SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter)))) {
+            std::cout << "WARP (software renderer) forced - using CPU for rendering" << std::endl;
+            spdlog::info("Using WARP software renderer (forceWarp=true)");
+            DX_CHECK(D3D12CreateDevice(warpAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device)));
+            return true;
+        }
+        std::cerr << "WARP adapter not available!" << std::endl;
+        return false;
+    }
 
     // Pick a hardware adapter that actually supports D3D12.
     // The previous logic relied on DedicatedVideoMemory > 0 and could fail on some iGPUs.

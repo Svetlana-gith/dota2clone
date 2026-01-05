@@ -8,6 +8,8 @@ add_library(world_editor_game STATIC
     GameStateManager.cpp
     DebugConsole.h
     DebugConsole.cpp
+    SettingsManager.h
+    SettingsManager.cpp
     
     # Game states
     states/LoginState.cpp
@@ -16,6 +18,22 @@ add_library(world_editor_game STATIC
     states/HeroPickState.cpp
     states/LoadingState.cpp
     states/InGameState.cpp
+    
+    # Reusable UI panels (can be used in multiple states)
+    ui/panels/SettingsPanel.h
+    ui/panels/SettingsPanel.cpp
+    ui/panels/MatchmakingPanel.h
+    ui/panels/MatchmakingPanel.cpp
+    ui/panels/ReconnectPanel.h
+    ui/panels/ReconnectPanel.cpp
+    
+    # Main menu specific UI components
+    ui/mainmenu/MainMenuTopBar.h
+    ui/mainmenu/MainMenuTopBar.cpp
+    ui/mainmenu/MainMenuBottomBar.h
+    ui/mainmenu/MainMenuBottomBar.cpp
+    ui/mainmenu/MainMenuContent.h
+    ui/mainmenu/MainMenuContent.cpp
 )
 
 target_include_directories(world_editor_game PUBLIC
@@ -33,6 +51,7 @@ target_link_libraries(world_editor_game
     world_editor_auth
     world_editor_serialization
     world_editor_ui
+    world_editor_gameplay
     panorama_ui
 )
 

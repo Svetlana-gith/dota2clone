@@ -1,9 +1,10 @@
 #include "CUIRenderer.h"
 #include <d3dcompiler.h>
-#include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <cmath>
 #include <codecvt>
 #include <locale>
+#include <spdlog/spdlog.h>
 
 #ifdef min
 #undef min
@@ -11,6 +12,10 @@
 #ifdef max
 #undef max
 #endif
+
+#define LOG_INFO(...) spdlog::info(__VA_ARGS__)
+#define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
+#define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
 
 namespace Panorama {
 
@@ -20,239 +25,105 @@ CUIRenderer::~CUIRenderer() {
     Shutdown();
 }
 
-bool CUIRenderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* context, f32 width, f32 height) {
+bool CUIRenderer::Initialize(ID3D12Device* device, ID3D12CommandQueue* commandQueue,
+                             ID3D12GraphicsCommandList* commandList, ID3D12DescriptorHeap* srvHeap,
+                             f32 width, f32 height) {
     m_device = device;
-    m_context = context;
+    m_commandQueue = commandQueue;
+    m_commandList = commandList;
+    m_srvHeap = srvHeap;
     m_screenWidth = width;
     m_screenHeight = height;
     
-    CreateShaders();
-    CreateBuffers();
-    CreateRenderStates();
+    if (!CreateRootSignature()) {
+        LOG_ERROR("CUIRenderer: Failed to create root signature");
+        return false;
+    }
+    if (!CompileShaders()) {
+        LOG_ERROR("CUIRenderer: Failed to compile shaders");
+        return false;
+    }
+    if (!CreatePipelineState()) {
+        LOG_ERROR("CUIRenderer: Failed to create pipeline state");
+        return false;
+    }
+    if (!CreateBuffers()) {
+        LOG_ERROR("CUIRenderer: Failed to create buffers");
+        return false;
+    }
+    if (!InitializeDirectWrite()) {
+        LOG_WARN("CUIRenderer: DirectWrite init failed (text measurement may be inaccurate)");
+    }
     
     m_transformStack.push_back(Transform2D{});
     
-    // Initialize D2D/DirectWrite interop with D3D11 (optional - text rendering)
-    // If this fails, we can still render shapes, just not text
-    InitializeD2DInterop();
-    
+    LOG_INFO("CUIRenderer (DX12) initialized: {}x{}", (int)width, (int)height);
     return true;
 }
 
-bool CUIRenderer::InitializeD2DInterop() {
+bool CUIRenderer::InitializeDirectWrite() {
     HRESULT hr;
     
-    // Create D2D1 Factory (must be single-threaded for DXGI interop)
-    D2D1_FACTORY_OPTIONS options = {};
-#ifdef _DEBUG
-    options.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
-#endif
-    
-    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options, m_d2dFactory.GetAddressOf());
+    // Create D2D1 Factory
+    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, m_d2dFactory.GetAddressOf());
     if (FAILED(hr)) return false;
-    
-    // Get DXGI device from D3D11 device
-    ComPtr<IDXGIDevice> dxgiDevice;
-    hr = m_device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
-    if (FAILED(hr)) return false;
-    
-    // Create D2D device from DXGI device
-    hr = m_d2dFactory->CreateDevice(dxgiDevice.Get(), m_d2dDevice.GetAddressOf());
-    if (FAILED(hr)) return false;
-    
-    // Create D2D device context
-    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, m_d2dContext.GetAddressOf());
-    if (FAILED(hr)) return false;
-    
-    // Set text antialiasing mode to ClearType for sharper text
-    m_d2dContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
     
     // Create DirectWrite factory
-    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory1),
+    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                              reinterpret_cast<IUnknown**>(m_dwriteFactory.GetAddressOf()));
     if (FAILED(hr)) return false;
     
-    // Configure DirectWrite rendering parameters for better quality
-    ComPtr<IDWriteRenderingParams> defaultParams;
-    hr = m_dwriteFactory->CreateRenderingParams(&defaultParams);
-    if (SUCCEEDED(hr)) {
-        // Create custom rendering parameters with enhanced settings
-        ComPtr<IDWriteRenderingParams> customParams;
-        hr = m_dwriteFactory->CreateCustomRenderingParams(
-            defaultParams->GetGamma(),                    // Use default gamma
-            defaultParams->GetEnhancedContrast(),         // Use default enhanced contrast
-            1.0f,                                          // ClearType level (1.0 = full ClearType)
-            DWRITE_PIXEL_GEOMETRY_RGB,                    // Standard RGB pixel geometry
-            DWRITE_RENDERING_MODE_CLEARTYPE_NATURAL_SYMMETRIC,  // Best quality ClearType mode
-            &customParams
-        );
-        
-        if (SUCCEEDED(hr)) {
-            m_d2dContext->SetTextRenderingParams(customParams.Get());
-        }
-    }
-    
-    // Create default text format
-    hr = m_dwriteFactory->CreateTextFormat(
-        L"Segoe UI",
-        nullptr,
-        DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        16.0f,
-        L"en-us",
-        m_defaultTextFormat.GetAddressOf()
-    );
-    if (FAILED(hr)) return false;
-    
-    // Create text brush
-    hr = m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), m_textBrush.GetAddressOf());
-    if (FAILED(hr)) return false;
-    
     return true;
-}
-
-bool CUIRenderer::SetRenderTarget(ID3D11Texture2D* backBuffer) {
-    if (!backBuffer) return false;
-    
-    // Release old D3D11 render target
-    if (m_renderTargetView) {
-        m_renderTargetView->Release();
-        m_renderTargetView = nullptr;
-    }
-    
-    // Create D3D11 render target view (always needed)
-    HRESULT hr = m_device->CreateRenderTargetView(backBuffer, nullptr, &m_renderTargetView);
-    if (FAILED(hr)) return false;
-    
-    // Get surface description for screen size
-    D3D11_TEXTURE2D_DESC texDesc;
-    backBuffer->GetDesc(&texDesc);
-    m_screenWidth = static_cast<f32>(texDesc.Width);
-    m_screenHeight = static_cast<f32>(texDesc.Height);
-    
-    // D2D setup is optional - if it fails, we still have D3D11 rendering
-    if (m_d2dContext) {
-        // Release old D2D targets
-        m_d2dContext->SetTarget(nullptr);
-        m_d2dTargetBitmap.Reset();
-        m_dxgiSurface.Reset();
-        
-        // Get DXGI surface from back buffer
-        hr = backBuffer->QueryInterface(IID_PPV_ARGS(&m_dxgiSurface));
-        if (SUCCEEDED(hr)) {
-            // Get surface description
-            DXGI_SURFACE_DESC surfaceDesc;
-            m_dxgiSurface->GetDesc(&surfaceDesc);
-            
-            // Create D2D bitmap properties for DXGI surface
-            D2D1_BITMAP_PROPERTIES1 bitmapProps = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                D2D1::PixelFormat(surfaceDesc.Format, D2D1_ALPHA_MODE_PREMULTIPLIED)
-            );
-            
-            // Create D2D bitmap from DXGI surface
-            hr = m_d2dContext->CreateBitmapFromDxgiSurface(
-                m_dxgiSurface.Get(),
-                &bitmapProps,
-                m_d2dTargetBitmap.GetAddressOf()
-            );
-            if (SUCCEEDED(hr)) {
-                // Set as render target
-                m_d2dContext->SetTarget(m_d2dTargetBitmap.Get());
-            }
-        }
-    }
-    
-    return true;
-}
-
-bool CUIRenderer::CreateD2DRenderTarget(ID3D11Texture2D* backBuffer) {
-    return SetRenderTarget(backBuffer);
 }
 
 void CUIRenderer::Shutdown() {
+    ShutdownDirectWrite();
     ClearTextureCache();
-    ShutdownD2DInterop();
     
-    #define SAFE_RELEASE(x) if (x) { x->Release(); x = nullptr; }
-    SAFE_RELEASE(m_renderTargetView);
-    SAFE_RELEASE(m_blendState);
-    SAFE_RELEASE(m_blendStateAdditive);
-    SAFE_RELEASE(m_rasterizerState);
-    SAFE_RELEASE(m_depthStencilState);
-    SAFE_RELEASE(m_samplerState);
-    SAFE_RELEASE(m_vertexShader);
-    SAFE_RELEASE(m_pixelShader);
-    SAFE_RELEASE(m_pixelShaderTextured);
-    SAFE_RELEASE(m_pixelShaderBlur);
-    SAFE_RELEASE(m_inputLayout);
-    SAFE_RELEASE(m_vertexBuffer);
-    SAFE_RELEASE(m_indexBuffer);
-    SAFE_RELEASE(m_constantBuffer);
-    #undef SAFE_RELEASE
+    for (uint32_t i = 0; i < kFrameCount; ++i) {
+        m_vertexBuffers[i].Reset();
+    }
+    
+    m_pipelineState.Reset();
+    m_pipelineStateTextured.Reset();
+    m_rootSignature.Reset();
+    m_vertexShader.Reset();
+    m_pixelShader.Reset();
+    m_pixelShaderTextured.Reset();
 }
 
-void CUIRenderer::ShutdownD2DInterop() {
+void CUIRenderer::ShutdownDirectWrite() {
     m_textFormatCache.clear();
-    m_textBrush.Reset();
-    m_defaultTextFormat.Reset();
     m_dwriteFactory.Reset();
-    m_d2dTargetBitmap.Reset();
-    m_dxgiSurface.Reset();
-    m_d2dContext.Reset();
-    m_d2dDevice.Reset();
     m_d2dFactory.Reset();
 }
 
-std::wstring CUIRenderer::ToWideString(const std::string& str) {
-    if (str.empty()) return L"";
-    int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-    std::wstring result(size - 1, 0);
-    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
-    return result;
+bool CUIRenderer::CreateRootSignature() {
+    // Root signature with one constant buffer (screen size)
+    D3D12_ROOT_PARAMETER rootParams[1] = {};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParams[0].Constants.ShaderRegister = 0;
+    rootParams[0].Constants.RegisterSpace = 0;
+    rootParams[0].Constants.Num32BitValues = 4; // screenWidth, screenHeight, padding x2
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    
+    D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
+    rootSigDesc.NumParameters = 1;
+    rootSigDesc.pParameters = rootParams;
+    rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+                                              &signature, &error);
+    if (FAILED(hr)) return false;
+    
+    hr = m_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
+                                        IID_PPV_ARGS(&m_rootSignature));
+    return SUCCEEDED(hr);
 }
 
-IDWriteTextFormat* CUIRenderer::GetOrCreateTextFormat(const FontInfo& font) {
-    // Create cache key
-    std::string key = font.family + "_" + std::to_string(font.size) + 
-                      (font.bold ? "_b" : "") + (font.italic ? "_i" : "");
-    
-    auto it = m_textFormatCache.find(key);
-    if (it != m_textFormatCache.end()) {
-        return it->second.Get();
-    }
-    
-    // Create new text format
-    ComPtr<IDWriteTextFormat> textFormat;
-    HRESULT hr = m_dwriteFactory->CreateTextFormat(
-        ToWideString(font.family).c_str(),
-        nullptr,
-        font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
-        font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        font.size,
-        L"en-us",
-        textFormat.GetAddressOf()
-    );
-    
-    if (FAILED(hr)) {
-        return m_defaultTextFormat.Get();
-    }
-    
-    // Enable better text quality settings
-    textFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);  // Prevent wrapping for cleaner rendering
-    
-    m_textFormatCache[key] = textFormat;
-    return textFormat.Get();
-}
-
-void CUIRenderer::SetScreenSize(f32 width, f32 height) {
-    m_screenWidth = width;
-    m_screenHeight = height;
-}
-
-void CUIRenderer::CreateShaders() {
+bool CUIRenderer::CompileShaders() {
     const char* shaderCode = R"(
         cbuffer Constants : register(b0) {
             float2 screenSize;
@@ -282,158 +153,184 @@ void CUIRenderer::CreateShaders() {
             return output;
         }
         
-        Texture2D tex : register(t0);
-        SamplerState samp : register(s0);
-        
         float4 PS(PS_INPUT input) : SV_TARGET {
             return input.color;
         }
         
         float4 PS_Textured(PS_INPUT input) : SV_TARGET {
-            return tex.Sample(samp, input.uv) * input.color;
+            return input.color;
         }
     )";
     
-    ID3DBlob* vsBlob = nullptr;
-    ID3DBlob* psBlob = nullptr;
-    ID3DBlob* errorBlob = nullptr;
+    ComPtr<ID3DBlob> errorBlob;
     
     HRESULT hr = D3DCompile(shaderCode, strlen(shaderCode), nullptr, nullptr, nullptr,
-                           "VS", "vs_5_0", 0, 0, &vsBlob, &errorBlob);
-    if (SUCCEEDED(hr) && vsBlob) {
-        m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
-                                     nullptr, &m_vertexShader);
+                           "VS", "vs_5_0", 0, 0, &m_vertexShader, &errorBlob);
+    if (FAILED(hr)) return false;
+    
+    hr = D3DCompile(shaderCode, strlen(shaderCode), nullptr, nullptr, nullptr,
+                   "PS", "ps_5_0", 0, 0, &m_pixelShader, &errorBlob);
+    if (FAILED(hr)) return false;
+    
+    hr = D3DCompile(shaderCode, strlen(shaderCode), nullptr, nullptr, nullptr,
+                   "PS_Textured", "ps_5_0", 0, 0, &m_pixelShaderTextured, &errorBlob);
+    if (FAILED(hr)) return false;
+    
+    return true;
+}
+
+bool CUIRenderer::CreatePipelineState() {
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+        { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+    };
+    
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+    psoDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+    psoDesc.pRootSignature = m_rootSignature.Get();
+    psoDesc.VS = { m_vertexShader->GetBufferPointer(), m_vertexShader->GetBufferSize() };
+    psoDesc.PS = { m_pixelShader->GetBufferPointer(), m_pixelShader->GetBufferSize() };
+    
+    // Rasterizer state
+    psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    psoDesc.RasterizerState.DepthClipEnable = TRUE;
+    
+    // Blend state (alpha blending)
+    psoDesc.BlendState.RenderTarget[0].BlendEnable = TRUE;
+    psoDesc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    psoDesc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    psoDesc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+    psoDesc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+    psoDesc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    psoDesc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    
+    // Depth stencil state (disabled)
+    psoDesc.DepthStencilState.DepthEnable = FALSE;
+    psoDesc.DepthStencilState.StencilEnable = FALSE;
+    
+    psoDesc.SampleMask = UINT_MAX;
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.NumRenderTargets = 1;
+    psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoDesc.SampleDesc.Count = 1;
+    
+    HRESULT hr = m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineState));
+    if (FAILED(hr)) return false;
+    
+    // Create textured pipeline state
+    psoDesc.PS = { m_pixelShaderTextured->GetBufferPointer(), m_pixelShaderTextured->GetBufferSize() };
+    hr = m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineStateTextured));
+    
+    return SUCCEEDED(hr);
+}
+
+bool CUIRenderer::CreateBuffers() {
+    // Create per-frame vertex buffers
+    const uint32_t vertexBufferSize = sizeof(UIVertex) * 40000; // 20k for shapes, 20k for text
+    
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+    
+    D3D12_RESOURCE_DESC bufferDesc = {};
+    bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufferDesc.Width = vertexBufferSize;
+    bufferDesc.Height = 1;
+    bufferDesc.DepthOrArraySize = 1;
+    bufferDesc.MipLevels = 1;
+    bufferDesc.SampleDesc.Count = 1;
+    bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    
+    for (uint32_t i = 0; i < kFrameCount; ++i) {
+        HRESULT hr = m_device->CreateCommittedResource(
+            &heapProps, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&m_vertexBuffers[i]));
+        if (FAILED(hr)) return false;
         
-        D3D11_INPUT_ELEMENT_DESC layout[] = {
-            { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-        };
-        m_device->CreateInputLayout(layout, 3, vsBlob->GetBufferPointer(),
-                                   vsBlob->GetBufferSize(), &m_inputLayout);
-        vsBlob->Release();
+        m_vertexBufferViews[i].BufferLocation = m_vertexBuffers[i]->GetGPUVirtualAddress();
+        m_vertexBufferViews[i].SizeInBytes = vertexBufferSize;
+        m_vertexBufferViews[i].StrideInBytes = sizeof(UIVertex);
     }
-    if (errorBlob) errorBlob->Release();
     
-    hr = D3DCompile(shaderCode, strlen(shaderCode), nullptr, nullptr, nullptr,
-                   "PS", "ps_5_0", 0, 0, &psBlob, &errorBlob);
-    if (SUCCEEDED(hr) && psBlob) {
-        m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(),
-                                    nullptr, &m_pixelShader);
-        psBlob->Release();
-    }
-    if (errorBlob) errorBlob->Release();
-    
-    hr = D3DCompile(shaderCode, strlen(shaderCode), nullptr, nullptr, nullptr,
-                   "PS_Textured", "ps_5_0", 0, 0, &psBlob, &errorBlob);
-    if (SUCCEEDED(hr) && psBlob) {
-        m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(),
-                                    nullptr, &m_pixelShaderTextured);
-        psBlob->Release();
-    }
-    if (errorBlob) errorBlob->Release();
+    return true;
 }
 
-void CUIRenderer::CreateBuffers() {
-    D3D11_BUFFER_DESC vbDesc = {};
-    vbDesc.Usage = D3D11_USAGE_DYNAMIC;
-    vbDesc.ByteWidth = sizeof(UIVertex) * 20000;
-    vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    vbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    m_device->CreateBuffer(&vbDesc, nullptr, &m_vertexBuffer);
-    
-    D3D11_BUFFER_DESC cbDesc = {};
-    cbDesc.Usage = D3D11_USAGE_DYNAMIC;
-    cbDesc.ByteWidth = 16;
-    cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    m_device->CreateBuffer(&cbDesc, nullptr, &m_constantBuffer);
+void CUIRenderer::SetScreenSize(f32 width, f32 height) {
+    m_screenWidth = width;
+    m_screenHeight = height;
 }
 
-void CUIRenderer::CreateRenderStates() {
-    D3D11_BLEND_DESC blendDesc = {};
-    blendDesc.RenderTarget[0].BlendEnable = TRUE;
-    blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-    blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-    blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-    m_device->CreateBlendState(&blendDesc, &m_blendState);
+std::wstring CUIRenderer::ToWideString(const std::string& str) {
+    if (str.empty()) return L"";
+    int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring result(size - 1, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
+    return result;
+}
+
+IDWriteTextFormat* CUIRenderer::GetOrCreateTextFormat(const FontInfo& font) {
+    std::string key = font.family + "_" + std::to_string(font.size) + 
+                      (font.bold ? "_b" : "") + (font.italic ? "_i" : "");
     
-    D3D11_RASTERIZER_DESC rastDesc = {};
-    rastDesc.FillMode = D3D11_FILL_SOLID;
-    rastDesc.CullMode = D3D11_CULL_NONE;
-    rastDesc.ScissorEnable = TRUE;
-    m_device->CreateRasterizerState(&rastDesc, &m_rasterizerState);
+    auto it = m_textFormatCache.find(key);
+    if (it != m_textFormatCache.end()) {
+        return it->second.Get();
+    }
     
-    D3D11_DEPTH_STENCIL_DESC dsDesc = {};
-    dsDesc.DepthEnable = FALSE;
-    m_device->CreateDepthStencilState(&dsDesc, &m_depthStencilState);
+    ComPtr<IDWriteTextFormat> textFormat;
+    HRESULT hr = m_dwriteFactory->CreateTextFormat(
+        ToWideString(font.family).c_str(),
+        nullptr,
+        font.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+        font.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,
+        font.size,
+        L"en-us",
+        textFormat.GetAddressOf()
+    );
     
-    D3D11_SAMPLER_DESC sampDesc = {};
-    sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-    m_device->CreateSamplerState(&sampDesc, &m_samplerState);
+    if (FAILED(hr)) return nullptr;
+    
+    m_textFormatCache[key] = textFormat;
+    return textFormat.Get();
 }
 
 void CUIRenderer::BeginFrame() {
     m_vertices.clear();
-    m_indices.clear();
+    m_textVertices.clear();
+    m_textUploadCursorVertices = 0;
     
-    // Set render target (if we have one)
-    if (m_renderTargetView) {
-        m_context->OMSetRenderTargets(1, &m_renderTargetView, nullptr);
+    // Advance frame index
+    m_currentFrameIndex = (m_currentFrameIndex + 1) % kFrameCount;
+    
+    // Set pipeline state
+    if (m_commandList && m_pipelineState && m_rootSignature) {
+        m_commandList->SetPipelineState(m_pipelineState.Get());
+        m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+        m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        
+        // Set screen size constants
+        float constants[4] = { m_screenWidth, m_screenHeight, 0, 0 };
+        m_commandList->SetGraphicsRoot32BitConstants(0, 4, constants, 0);
+        
+        // Set viewport
+        D3D12_VIEWPORT viewport = {};
+        viewport.Width = m_screenWidth;
+        viewport.Height = m_screenHeight;
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        m_commandList->RSSetViewports(1, &viewport);
+        
+        // Set scissor rect
+        D3D12_RECT scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
+        m_commandList->RSSetScissorRects(1, &scissor);
     }
-    // Note: If no render target view, we assume the caller has already set one
-    
-    m_context->OMSetBlendState(m_blendState, nullptr, 0xFFFFFFFF);
-    m_context->OMSetDepthStencilState(m_depthStencilState, 0);
-    m_context->RSSetState(m_rasterizerState);
-    
-    m_context->VSSetShader(m_vertexShader, nullptr, 0);
-    m_context->PSSetShader(m_pixelShader, nullptr, 0);
-    m_context->IASetInputLayout(m_inputLayout);
-    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    
-    if (m_samplerState) {
-        m_context->PSSetSamplers(0, 1, &m_samplerState);
-    }
-    
-    // Set viewport
-    D3D11_VIEWPORT vp = {};
-    vp.Width = m_screenWidth;
-    vp.Height = m_screenHeight;
-    vp.MinDepth = 0.0f;
-    vp.MaxDepth = 1.0f;
-    m_context->RSSetViewports(1, &vp);
-    
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    if (m_constantBuffer && SUCCEEDED(m_context->Map(m_constantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        f32* data = (f32*)mapped.pData;
-        data[0] = m_screenWidth;
-        data[1] = m_screenHeight;
-        data[2] = 0;
-        data[3] = 0;
-        m_context->Unmap(m_constantBuffer, 0);
-    }
-    if (m_constantBuffer) {
-        m_context->VSSetConstantBuffers(0, 1, &m_constantBuffer);
-    }
-    
-    if (m_vertexBuffer) {
-        UINT stride = sizeof(UIVertex);
-        UINT offset = 0;
-        m_context->IASetVertexBuffers(0, 1, &m_vertexBuffer, &stride, &offset);
-    }
-    
-    D3D11_RECT scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
-    m_context->RSSetScissorRects(1, &scissor);
     
     ClearEffects();
+    m_frameCount++;
 }
 
 void CUIRenderer::EndFrame() {
@@ -442,19 +339,78 @@ void CUIRenderer::EndFrame() {
 
 void CUIRenderer::Flush() {
     FlushBatch();
+    FlushTextBatch();
 }
 
 void CUIRenderer::FlushBatch() {
-    if (m_vertices.empty() || !m_vertexBuffer || !m_context) return;
+    if (m_vertices.empty() || !m_commandList) return;
     
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    if (SUCCEEDED(m_context->Map(m_vertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        memcpy(mapped.pData, m_vertices.data(), m_vertices.size() * sizeof(UIVertex));
-        m_context->Unmap(m_vertexBuffer, 0);
+    auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
+    if (!vertexBuffer) return;
+    
+    // Log first few flushes
+    static int flushCount = 0;
+    if (flushCount < 5) {
+        LOG_INFO("CUIRenderer::FlushBatch: {} vertices, frame {}", m_vertices.size(), m_currentFrameIndex);
+        flushCount++;
     }
     
-    m_context->Draw((UINT)m_vertices.size(), 0);
+    // Map and copy vertices
+    void* mappedData = nullptr;
+    D3D12_RANGE readRange = { 0, 0 };
+    HRESULT hr = vertexBuffer->Map(0, &readRange, &mappedData);
+    if (SUCCEEDED(hr)) {
+        memcpy(mappedData, m_vertices.data(), m_vertices.size() * sizeof(UIVertex));
+        vertexBuffer->Unmap(0, nullptr);
+    } else {
+        LOG_ERROR("CUIRenderer::FlushBatch: Failed to map vertex buffer");
+        return;
+    }
+    
+    // Draw
+    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferViews[m_currentFrameIndex]);
+    m_commandList->DrawInstanced((UINT)m_vertices.size(), 1, 0, 0);
+    
     m_vertices.clear();
+}
+
+void CUIRenderer::FlushTextBatch() {
+    if (m_textVertices.empty() || !m_commandList) return;
+    
+    auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
+    if (!vertexBuffer) return;
+    
+    // Text uses second half of buffer
+    const size_t textOffset = 20000 * sizeof(UIVertex);
+    
+    void* mappedData = nullptr;
+    D3D12_RANGE readRange = { 0, 0 };
+    HRESULT hr = vertexBuffer->Map(0, &readRange, &mappedData);
+    if (SUCCEEDED(hr)) {
+        char* dest = static_cast<char*>(mappedData) + textOffset + m_textUploadCursorVertices * sizeof(UIVertex);
+        memcpy(dest, m_textVertices.data(), m_textVertices.size() * sizeof(UIVertex));
+        vertexBuffer->Unmap(0, nullptr);
+    }
+    
+    // Draw text with textured pipeline
+    if (m_pipelineStateTextured) {
+        m_commandList->SetPipelineState(m_pipelineStateTextured.Get());
+    }
+    
+    D3D12_VERTEX_BUFFER_VIEW textView = m_vertexBufferViews[m_currentFrameIndex];
+    textView.BufferLocation += textOffset + m_textUploadCursorVertices * sizeof(UIVertex);
+    textView.SizeInBytes = (UINT)(m_textVertices.size() * sizeof(UIVertex));
+    
+    m_commandList->IASetVertexBuffers(0, 1, &textView);
+    m_commandList->DrawInstanced((UINT)m_textVertices.size(), 1, 0, 0);
+    
+    // Restore normal pipeline
+    if (m_pipelineState) {
+        m_commandList->SetPipelineState(m_pipelineState.Get());
+    }
+    
+    m_textUploadCursorVertices += m_textVertices.size();
+    m_textVertices.clear();
 }
 
 Vector2D CUIRenderer::TransformPoint(f32 x, f32 y) const {
@@ -462,15 +418,12 @@ Vector2D CUIRenderer::TransformPoint(f32 x, f32 y) const {
     
     const auto& t = m_transformStack.back();
     
-    // Apply origin offset
     f32 px = x - t.originX;
     f32 py = y - t.originY;
     
-    // Apply scale
     px *= t.scaleX;
     py *= t.scaleY;
     
-    // Apply rotation
     if (t.rotation != 0) {
         f32 rad = t.rotation * 3.14159265f / 180.0f;
         f32 cos_r = std::cos(rad);
@@ -481,7 +434,6 @@ Vector2D CUIRenderer::TransformPoint(f32 x, f32 y) const {
         py = ry;
     }
     
-    // Restore origin and apply translation
     return {px + t.originX + t.translateX, py + t.originY + t.translateY};
 }
 
@@ -491,13 +443,17 @@ void CUIRenderer::AddQuad(const Rect2D& rect, const Color& color, f32 u0, f32 v0
     auto p2 = TransformPoint(rect.x + rect.width, rect.y + rect.height);
     auto p3 = TransformPoint(rect.x, rect.y + rect.height);
     
+    // Apply current opacity
+    Color c = color;
+    c.a *= m_currentOpacity;
+    
     UIVertex v[6];
-    v[0] = { p0.x, p0.y, u0, v0, color.r, color.g, color.b, color.a };
-    v[1] = { p1.x, p1.y, u1, v0, color.r, color.g, color.b, color.a };
-    v[2] = { p2.x, p2.y, u1, v1, color.r, color.g, color.b, color.a };
-    v[3] = { p0.x, p0.y, u0, v0, color.r, color.g, color.b, color.a };
-    v[4] = { p2.x, p2.y, u1, v1, color.r, color.g, color.b, color.a };
-    v[5] = { p3.x, p3.y, u0, v1, color.r, color.g, color.b, color.a };
+    v[0] = { p0.x, p0.y, u0, v0, c.r, c.g, c.b, c.a };
+    v[1] = { p1.x, p1.y, u1, v0, c.r, c.g, c.b, c.a };
+    v[2] = { p2.x, p2.y, u1, v1, c.r, c.g, c.b, c.a };
+    v[3] = { p0.x, p0.y, u0, v0, c.r, c.g, c.b, c.a };
+    v[4] = { p2.x, p2.y, u1, v1, c.r, c.g, c.b, c.a };
+    v[5] = { p3.x, p3.y, u0, v1, c.r, c.g, c.b, c.a };
     
     for (int i = 0; i < 6; i++) {
         m_vertices.push_back(v[i]);
@@ -515,13 +471,16 @@ void CUIRenderer::DrawRectOutline(const Rect2D& rect, const Color& color, f32 th
     AddQuad({ rect.x + rect.width - thickness, rect.y + thickness, thickness, rect.height - thickness * 2 }, color);
 }
 
+void CUIRenderer::DrawRoundedRect(f32 radius, const Rect2D& rect, const Color& color) {
+    // Simplified: just draw regular rect
+    AddQuad(rect, color);
+}
+
 void CUIRenderer::DrawRoundedRect(const Rect2D& rect, const Color& color, f32 radius) {
-    DrawRoundedRect(rect, color, radius, radius, radius, radius);
+    AddQuad(rect, color);
 }
 
 void CUIRenderer::DrawRoundedRect(const Rect2D& rect, const Color& color, f32 tl, f32 tr, f32 br, f32 bl) {
-    // Simplified: just draw regular rect for now
-    // Full implementation would tessellate corners
     AddQuad(rect, color);
 }
 
@@ -540,6 +499,11 @@ void CUIRenderer::DrawGradientRect(const Rect2D& rect, const Color& startColor, 
         c1 = c2 = endColor;
     }
     
+    c0.a *= m_currentOpacity;
+    c1.a *= m_currentOpacity;
+    c2.a *= m_currentOpacity;
+    c3.a *= m_currentOpacity;
+    
     UIVertex v[6];
     v[0] = { p0.x, p0.y, 0, 0, c0.r, c0.g, c0.b, c0.a };
     v[1] = { p1.x, p1.y, 1, 0, c1.r, c1.g, c1.b, c1.a };
@@ -552,103 +516,78 @@ void CUIRenderer::DrawGradientRect(const Rect2D& rect, const Color& startColor, 
 }
 
 void CUIRenderer::DrawRadialGradient(const Rect2D& rect, const Color& centerColor, const Color& edgeColor) {
-    // Simplified implementation
     DrawRect(rect, centerColor);
 }
 
 void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const Color& color, 
                            const FontInfo& font, HorizontalAlign hAlign, VerticalAlign vAlign) {
-    if (text.empty() || !m_d2dContext || !m_d2dTargetBitmap) return;
+    if (text.empty()) return;
     
-    // Flush D3D11 batch before D2D rendering
-    FlushBatch();
+    // For DX12, we render text as colored quads (simplified approach)
+    // A full implementation would use a font atlas
     
-    // Get or create text format
-    IDWriteTextFormat* textFormat = GetOrCreateTextFormat(font);
-    if (!textFormat) return;
+    // Calculate text position based on alignment
+    Vector2D textSize = MeasureText(text, font);
+    f32 x = bounds.x;
+    f32 y = bounds.y;
     
-    // Set text alignment
     switch (hAlign) {
-        case HorizontalAlign::Left:
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            break;
         case HorizontalAlign::Center:
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            x = bounds.x + (bounds.width - textSize.x) * 0.5f;
             break;
         case HorizontalAlign::Right:
-            textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            x = bounds.x + bounds.width - textSize.x;
+            break;
+        default:
             break;
     }
     
     switch (vAlign) {
-        case VerticalAlign::Top:
-            textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            break;
         case VerticalAlign::Center:
-            textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            y = bounds.y + (bounds.height - textSize.y) * 0.5f;
             break;
         case VerticalAlign::Bottom:
-            textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_FAR);
+            y = bounds.y + bounds.height - textSize.y;
+            break;
+        default:
             break;
     }
     
-    // Apply transform
-    D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Identity();
-    if (!m_transformStack.empty()) {
-        const auto& t = m_transformStack.back();
-        transform = D2D1::Matrix3x2F::Translation(t.translateX, t.translateY) *
-                    D2D1::Matrix3x2F::Rotation(t.rotation, D2D1::Point2F(t.originX, t.originY)) *
-                    D2D1::Matrix3x2F::Scale(t.scaleX, t.scaleY, D2D1::Point2F(t.originX, t.originY));
+    // Draw each character as a simple rectangle (placeholder for font atlas rendering)
+    f32 charWidth = font.size * 0.6f;
+    f32 charHeight = font.size;
+    Color c = color;
+    c.a *= m_currentOpacity;
+    
+    for (size_t i = 0; i < text.length(); ++i) {
+        if (text[i] == ' ') {
+            x += charWidth * 0.5f;
+            continue;
+        }
+        
+        // For now, draw a small rectangle for each character
+        // This is a placeholder - real implementation needs font atlas
+        Rect2D charRect = { x, y + charHeight * 0.1f, charWidth * 0.8f, charHeight * 0.8f };
+        
+        UIVertex v[6];
+        v[0] = { charRect.x, charRect.y, 0, 0, c.r, c.g, c.b, c.a };
+        v[1] = { charRect.x + charRect.width, charRect.y, 1, 0, c.r, c.g, c.b, c.a };
+        v[2] = { charRect.x + charRect.width, charRect.y + charRect.height, 1, 1, c.r, c.g, c.b, c.a };
+        v[3] = { charRect.x, charRect.y, 0, 0, c.r, c.g, c.b, c.a };
+        v[4] = { charRect.x + charRect.width, charRect.y + charRect.height, 1, 1, c.r, c.g, c.b, c.a };
+        v[5] = { charRect.x, charRect.y + charRect.height, 0, 1, c.r, c.g, c.b, c.a };
+        
+        for (int j = 0; j < 6; j++) m_textVertices.push_back(v[j]);
+        
+        x += charWidth;
     }
-    
-    // Convert text to wide string
-    std::wstring wtext = ToWideString(text);
-    
-    // Set brush color
-    m_textBrush->SetColor(D2D1::ColorF(color.r, color.g, color.b, color.a));
-    
-    // Create layout rect
-    D2D1_RECT_F layoutRect = D2D1::RectF(bounds.x, bounds.y, 
-                                          bounds.x + bounds.width, 
-                                          bounds.y + bounds.height);
-    
-    // Begin D2D drawing
-    m_d2dContext->BeginDraw();
-    m_d2dContext->SetTransform(transform);
-    
-    // Set high-quality text rendering options
-    m_d2dContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
-    
-    // Draw text with enhanced options
-    m_d2dContext->DrawText(
-        wtext.c_str(),
-        static_cast<UINT32>(wtext.length()),
-        textFormat,
-        layoutRect,
-        m_textBrush.Get(),
-        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT  // Enable color fonts and better rendering
-    );
-    
-    // End D2D drawing
-    m_d2dContext->EndDraw();
-    
-    // Reset transform
-    m_d2dContext->SetTransform(D2D1::Matrix3x2F::Identity());
-}
-
-void CUIRenderer::DrawTextWithShadow(const std::string& text, const Rect2D& bounds, const Color& color,
-                                     const Color& shadowColor, f32 shadowOffsetX, f32 shadowOffsetY,
-                                     const FontInfo& font) {
-    Rect2D shadowBounds = bounds;
-    shadowBounds.x += shadowOffsetX;
-    shadowBounds.y += shadowOffsetY;
-    DrawText(text, shadowBounds, shadowColor, font);
-    DrawText(text, bounds, color, font);
 }
 
 Vector2D CUIRenderer::MeasureText(const std::string& text, const FontInfo& font) {
-    if (text.empty() || !m_dwriteFactory) {
-        return {0, font.size};
+    if (text.empty()) return {0, font.size};
+    
+    if (!m_dwriteFactory) {
+        return {text.length() * font.size * 0.6f, font.size};
     }
     
     IDWriteTextFormat* textFormat = GetOrCreateTextFormat(font);
@@ -658,14 +597,13 @@ Vector2D CUIRenderer::MeasureText(const std::string& text, const FontInfo& font)
     
     std::wstring wtext = ToWideString(text);
     
-    // Create text layout for measurement
     ComPtr<IDWriteTextLayout> textLayout;
     HRESULT hr = m_dwriteFactory->CreateTextLayout(
         wtext.c_str(),
         static_cast<UINT32>(wtext.length()),
         textFormat,
-        10000.0f,  // Max width
-        10000.0f,  // Max height
+        10000.0f,
+        10000.0f,
         textLayout.GetAddressOf()
     );
     
@@ -682,44 +620,73 @@ Vector2D CUIRenderer::MeasureText(const std::string& text, const FontInfo& font)
     return {metrics.width, metrics.height};
 }
 
+f32 CUIRenderer::MeasureTextWidth(const std::string& text, const FontInfo& font) {
+    return MeasureText(text, font).x;
+}
+
+f32 CUIRenderer::MeasureTextHeight(const FontInfo& font) {
+    return font.size;
+}
+
 void CUIRenderer::DrawImage(const std::string& path, const Rect2D& rect, f32 opacity) {
-    // Would load texture and draw
-    Color c(1, 1, 1, opacity);
+    Color c(1, 1, 1, opacity * m_currentOpacity);
     AddQuad(rect, c);
 }
 
 void CUIRenderer::DrawImageTinted(const std::string& path, const Rect2D& rect, const Color& tint) {
-    AddQuad(rect, tint);
+    Color c = tint;
+    c.a *= m_currentOpacity;
+    AddQuad(rect, c);
 }
 
 void CUIRenderer::DrawImageRegion(const std::string& path, const Rect2D& destRect, const Rect2D& srcRect) {
     Color c = Color::White();
+    c.a *= m_currentOpacity;
     AddQuad(destRect, c, srcRect.x, srcRect.y, srcRect.x + srcRect.width, srcRect.y + srcRect.height);
 }
 
-void CUIRenderer::DrawLine(const Vector2D& start, const Vector2D& end, const Color& color, f32 thickness) {
-    f32 dx = end.x - start.x;
-    f32 dy = end.y - start.y;
+void CUIRenderer::DrawBoxShadow(const Rect2D& rect, const Color& color, f32 offsetX, f32 offsetY, 
+                                f32 blur, f32 spread, bool inset) {
+    Rect2D shadowRect = rect;
+    shadowRect.x += offsetX - spread;
+    shadowRect.y += offsetY - spread;
+    shadowRect.width += spread * 2;
+    shadowRect.height += spread * 2;
+    
+    Color shadowColor = color;
+    shadowColor.a *= 0.5f * m_currentOpacity;
+    DrawRect(shadowRect, shadowColor);
+}
+
+void CUIRenderer::DrawLine(f32 x1, f32 y1, f32 x2, f32 y2, const Color& color, f32 thickness) {
+    f32 dx = x2 - x1;
+    f32 dy = y2 - y1;
     f32 len = std::sqrt(dx * dx + dy * dy);
     if (len < 0.001f) return;
     
     f32 nx = -dy / len * thickness * 0.5f;
     f32 ny = dx / len * thickness * 0.5f;
     
+    Color c = color;
+    c.a *= m_currentOpacity;
+    
     UIVertex v[6];
-    v[0] = { start.x + nx, start.y + ny, 0, 0, color.r, color.g, color.b, color.a };
-    v[1] = { end.x + nx, end.y + ny, 0, 0, color.r, color.g, color.b, color.a };
-    v[2] = { end.x - nx, end.y - ny, 0, 0, color.r, color.g, color.b, color.a };
-    v[3] = { start.x + nx, start.y + ny, 0, 0, color.r, color.g, color.b, color.a };
-    v[4] = { end.x - nx, end.y - ny, 0, 0, color.r, color.g, color.b, color.a };
-    v[5] = { start.x - nx, start.y - ny, 0, 0, color.r, color.g, color.b, color.a };
+    v[0] = { x1 + nx, y1 + ny, 0, 0, c.r, c.g, c.b, c.a };
+    v[1] = { x2 + nx, y2 + ny, 0, 0, c.r, c.g, c.b, c.a };
+    v[2] = { x2 - nx, y2 - ny, 0, 0, c.r, c.g, c.b, c.a };
+    v[3] = { x1 + nx, y1 + ny, 0, 0, c.r, c.g, c.b, c.a };
+    v[4] = { x2 - nx, y2 - ny, 0, 0, c.r, c.g, c.b, c.a };
+    v[5] = { x1 - nx, y1 - ny, 0, 0, c.r, c.g, c.b, c.a };
     
     for (int i = 0; i < 6; i++) m_vertices.push_back(v[i]);
 }
 
-void CUIRenderer::DrawCircle(const Vector2D& center, f32 radius, const Color& color, bool filled) {
+void CUIRenderer::DrawCircle(f32 cx, f32 cy, f32 radius, const Color& color, bool filled) {
     const int segments = 32;
     const f32 PI = 3.14159265f;
+    
+    Color c = color;
+    c.a *= m_currentOpacity;
     
     if (filled) {
         for (int i = 0; i < segments; i++) {
@@ -727,9 +694,9 @@ void CUIRenderer::DrawCircle(const Vector2D& center, f32 radius, const Color& co
             f32 a2 = (f32)(i + 1) / segments * 2 * PI;
             
             UIVertex v[3];
-            v[0] = { center.x, center.y, 0, 0, color.r, color.g, color.b, color.a };
-            v[1] = { center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, 0, 0, color.r, color.g, color.b, color.a };
-            v[2] = { center.x + std::cos(a2) * radius, center.y + std::sin(a2) * radius, 0, 0, color.r, color.g, color.b, color.a };
+            v[0] = { cx, cy, 0, 0, c.r, c.g, c.b, c.a };
+            v[1] = { cx + std::cos(a1) * radius, cy + std::sin(a1) * radius, 0, 0, c.r, c.g, c.b, c.a };
+            v[2] = { cx + std::cos(a2) * radius, cy + std::sin(a2) * radius, 0, 0, c.r, c.g, c.b, c.a };
             
             for (int j = 0; j < 3; j++) m_vertices.push_back(v[j]);
         }
@@ -737,42 +704,8 @@ void CUIRenderer::DrawCircle(const Vector2D& center, f32 radius, const Color& co
         for (int i = 0; i < segments; i++) {
             f32 a1 = (f32)i / segments * 2 * PI;
             f32 a2 = (f32)(i + 1) / segments * 2 * PI;
-            DrawLine({center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius},
-                    {center.x + std::cos(a2) * radius, center.y + std::sin(a2) * radius}, color, 1);
-        }
-    }
-}
-
-void CUIRenderer::DrawArc(const Vector2D& center, f32 radius, f32 startAngle, f32 endAngle, 
-                          const Color& color, f32 thickness) {
-    const int segments = 32;
-    const f32 PI = 3.14159265f;
-    f32 startRad = startAngle * PI / 180.0f;
-    f32 endRad = endAngle * PI / 180.0f;
-    f32 step = (endRad - startRad) / segments;
-    
-    for (int i = 0; i < segments; i++) {
-        f32 a1 = startRad + step * i;
-        f32 a2 = startRad + step * (i + 1);
-        DrawLine({center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius},
-                {center.x + std::cos(a2) * radius, center.y + std::sin(a2) * radius}, color, thickness);
-    }
-}
-
-void CUIRenderer::DrawPolygon(const std::vector<Vector2D>& points, const Color& color, bool filled) {
-    if (points.size() < 3) return;
-    
-    if (filled) {
-        for (size_t i = 1; i < points.size() - 1; i++) {
-            UIVertex v[3];
-            v[0] = { points[0].x, points[0].y, 0, 0, color.r, color.g, color.b, color.a };
-            v[1] = { points[i].x, points[i].y, 0, 0, color.r, color.g, color.b, color.a };
-            v[2] = { points[i+1].x, points[i+1].y, 0, 0, color.r, color.g, color.b, color.a };
-            for (int j = 0; j < 3; j++) m_vertices.push_back(v[j]);
-        }
-    } else {
-        for (size_t i = 0; i < points.size(); i++) {
-            DrawLine(points[i], points[(i + 1) % points.size()], color, 1);
+            DrawLine(cx + std::cos(a1) * radius, cy + std::sin(a1) * radius,
+                    cx + std::cos(a2) * radius, cy + std::sin(a2) * radius, color, 1);
         }
     }
 }
@@ -795,22 +728,20 @@ void CUIRenderer::SetClipEnabled(bool enabled) {
 }
 
 void CUIRenderer::UpdateScissorRect() {
+    if (!m_commandList) return;
+    
+    D3D12_RECT scissor;
     if (!m_clipEnabled || m_clipStack.empty()) {
-        D3D11_RECT scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
-        m_context->RSSetScissorRects(1, &scissor);
+        scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
     } else {
         const Rect2D& r = m_clipStack.back();
-        D3D11_RECT scissor = { (LONG)r.x, (LONG)r.y, (LONG)(r.x + r.width), (LONG)(r.y + r.height) };
-        m_context->RSSetScissorRects(1, &scissor);
+        scissor = { (LONG)r.x, (LONG)r.y, (LONG)(r.x + r.width), (LONG)(r.y + r.height) };
     }
+    m_commandList->RSSetScissorRects(1, &scissor);
 }
 
-void CUIRenderer::PushTransform() {
-    if (m_transformStack.empty()) {
-        m_transformStack.push_back(Transform2D{});
-    } else {
-        m_transformStack.push_back(m_transformStack.back());
-    }
+void CUIRenderer::PushTransform(const Transform2D& transform) {
+    m_transformStack.push_back(transform);
 }
 
 void CUIRenderer::PopTransform() {
@@ -846,6 +777,7 @@ void CUIRenderer::SetTransformOrigin(f32 x, f32 y) {
     }
 }
 
+void CUIRenderer::SetOpacity(f32 opacity) { m_currentOpacity = opacity; }
 void CUIRenderer::SetBlur(f32 amount) { m_currentBlur = amount; }
 void CUIRenderer::SetSaturation(f32 amount) { m_currentSaturation = amount; }
 void CUIRenderer::SetBrightness(f32 amount) { m_currentBrightness = amount; }
@@ -853,6 +785,7 @@ void CUIRenderer::SetContrast(f32 amount) { m_currentContrast = amount; }
 void CUIRenderer::SetWashColor(const Color& color) { m_currentWashColor = color; }
 
 void CUIRenderer::ClearEffects() {
+    m_currentOpacity = 1.0f;
     m_currentBlur = 0;
     m_currentSaturation = 1;
     m_currentBrightness = 1;
@@ -860,41 +793,7 @@ void CUIRenderer::ClearEffects() {
     m_currentWashColor = Color::Transparent();
 }
 
-void CUIRenderer::DrawBoxShadow(const Rect2D& rect, const Color& color, f32 offsetX, f32 offsetY, 
-                                f32 blur, f32 spread, bool inset) {
-    // Simplified shadow - just draw offset rect with alpha
-    Rect2D shadowRect = rect;
-    shadowRect.x += offsetX - spread;
-    shadowRect.y += offsetY - spread;
-    shadowRect.width += spread * 2;
-    shadowRect.height += spread * 2;
-    
-    Color shadowColor = color;
-    shadowColor.a *= 0.5f;
-    DrawRect(shadowRect, shadowColor);
-}
-
-ID3D11ShaderResourceView* CUIRenderer::LoadTexture(const std::string& path) {
-    auto it = m_textureCache.find(path);
-    if (it != m_textureCache.end()) return it->second;
-    
-    // Would load texture from file
-    // For now, return nullptr
-    return nullptr;
-}
-
-void CUIRenderer::UnloadTexture(const std::string& path) {
-    auto it = m_textureCache.find(path);
-    if (it != m_textureCache.end()) {
-        if (it->second) it->second->Release();
-        m_textureCache.erase(it);
-    }
-}
-
 void CUIRenderer::ClearTextureCache() {
-    for (auto& pair : m_textureCache) {
-        if (pair.second) pair.second->Release();
-    }
     m_textureCache.clear();
 }
 

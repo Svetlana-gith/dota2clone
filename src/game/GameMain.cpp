@@ -326,7 +326,7 @@ void Render() {
     g_renderer->BeginFrame();
     
     // Clear and begin rendering to swapchain
-    float clearColor[4] = { 0.02f, 0.02f, 0.04f, 1.0f };
+    float clearColor[4] = { 0.02f, 0.04f, 0.08f, 1.0f };  // Dark blue background
     g_renderer->BeginSwapchainPass(clearColor);
     
     // Render game state (includes world and UI)

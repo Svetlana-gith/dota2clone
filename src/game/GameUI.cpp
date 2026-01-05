@@ -35,7 +35,7 @@ void GameUI::drawMainMenu(GameState& state) {
     
     ImGui::SetCursorPos(ImVec2(center.x - buttonSize.x * 0.5f, startY + 80));
     if (drawMenuButton("SETTINGS", buttonSize)) {
-        // TODO: Settings screen
+        // Settings handled by Panorama UI in MainMenuState
     }
     
     ImGui::SetCursorPos(ImVec2(center.x - buttonSize.x * 0.5f, startY + 160));
@@ -272,7 +272,7 @@ void GameUI::drawPauseMenu(GameState& state) {
     
     ImGui::SetCursorPos(ImVec2(buttonX, 130));
     if (drawMenuButton("SETTINGS", buttonSize)) {
-        // TODO
+        // Settings handled by Panorama UI
     }
     
     ImGui::SetCursorPos(ImVec2(buttonX, 190));

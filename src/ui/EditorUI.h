@@ -13,6 +13,7 @@ class DirectXRenderer;
 namespace WorldEditor {
 
 class World;
+class GameplayController;
 
 // Editor UI front-end built on ImGui.
 // This module is intentionally editor-only and should not be used for in-game UI.
@@ -101,6 +102,9 @@ public:
     
     // Game mode access
     class GameMode* getGameMode() { return gameMode_.get(); }
+    
+    // Gameplay controller access (shared with GameMode)
+    GameplayController* getGameplayController() { return gameplayController_.get(); }
 
     // Tile editor controls (for hotkeys)
     void setTileTool(TileTool tool) { tileTool_ = tool; }
@@ -111,6 +115,7 @@ public:
 private:
     // Game mode for testing gameplay
     UniquePtr<class GameMode> gameMode_;
+    UniquePtr<GameplayController> gameplayController_;
     Entity selected_ = INVALID_ENTITY;
     bool dockLayoutBuilt_ = false;
     bool requestResetLayout_ = false;

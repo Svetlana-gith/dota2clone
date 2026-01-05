@@ -16,6 +16,7 @@
 #include "../server/ServerWorld.h"
 #include "../world/World.h"
 #include "../network/MatchmakingTypes.h"
+#include "../gameplay/GameplayController.h"
 
 namespace WorldEditor {
 namespace Matchmaking {
@@ -73,6 +74,7 @@ public:
     virtual bool OnMouseMove(f32 x, f32 y) { return false; }
     virtual bool OnMouseDown(f32 x, f32 y, i32 button) { return false; }
     virtual bool OnMouseUp(f32 x, f32 y, i32 button) { return false; }
+    virtual bool OnMouseWheel(f32 delta) { return false; }
     
 protected:
     GameStateManager* m_manager = nullptr;
@@ -158,19 +160,15 @@ private:
     void CheckForActiveGame();
     void SetupMatchmakingCallbacks();
     void SetupReconnectCallbacks();
-    void ShowReconnectOverlay(const WorldEditor::Matchmaking::ActiveGameInfo& gameInfo);
     void OnReconnectClicked();
     void OnAbandonClicked();
     
-    // UI panels (will be Panorama panels)
+    // UI panels (modular components)
     struct MenuUI;
     std::unique_ptr<MenuUI> m_ui;
 
     // Matchmaking (Dota-like; no manual server selection)
     std::unique_ptr<WorldEditor::Matchmaking::MatchmakingClient> m_mmClient;
-    
-    // Active game info for reconnect
-    WorldEditor::Matchmaking::ActiveGameInfo m_activeGameInfo;
 };
 
 // ============ Loading State ============
@@ -342,31 +340,39 @@ public:
     void Render() override;
     
     bool OnKeyDown(i32 key) override;
+    bool OnKeyUp(i32 key) override;
     bool OnMouseMove(f32 x, f32 y) override;
     bool OnMouseDown(f32 x, f32 y, i32 button) override;
     bool OnMouseUp(f32 x, f32 y, i32 button) override;
+    bool OnMouseWheel(f32 delta) override;
     
     // Game actions
     void OnEscapePressed();
     void OnDisconnect();
     
     // Set game worlds from LoadingState
-    void SetWorlds(std::unique_ptr<WorldEditor::ClientWorld> client,
-                   std::unique_ptr<WorldEditor::ServerWorld> server);
-    void SetWorlds(std::unique_ptr<WorldEditor::ClientWorld> client,
-                   std::unique_ptr<WorldEditor::ServerWorld> server,
-                   std::unique_ptr<WorldEditor::World> gameWorld);
+    void SetWorlds(std::unique_ptr<::WorldEditor::ClientWorld> client,
+                   std::unique_ptr<::WorldEditor::ServerWorld> server);
+    void SetWorlds(std::unique_ptr<::WorldEditor::ClientWorld> client,
+                   std::unique_ptr<::WorldEditor::ServerWorld> server,
+                   std::unique_ptr<::WorldEditor::World> gameWorld);
+    
+    // Access to gameplay controller (for UI components)
+    ::WorldEditor::GameplayController* GetGameplayController() { return m_gameplayController.get(); }
     
 private:
     // Helper to get shared NetworkClient from GameStateManager
-    WorldEditor::Network::NetworkClient* GetNetworkClient();
+    ::WorldEditor::Network::NetworkClient* GetNetworkClient();
     
     void CreateHUD();
     void DestroyHUD();
     void RenderWorld();
     void RenderHUD();
+    void RenderHealthBars();
+    void RenderTopBar();
     void UpdateHUDFromGameState();
     void SetupNetworkCallbacks();
+    void UpdateInputState();
     
     // Network
     void UpdateNetwork(f32 deltaTime);
@@ -376,11 +382,17 @@ private:
     bool m_isPaused = false;
     
     // Game worlds
-    std::unique_ptr<WorldEditor::ClientWorld> m_clientWorld;
-    std::unique_ptr<WorldEditor::ServerWorld> m_serverWorld;
-    std::unique_ptr<WorldEditor::World> m_gameWorld;  // Static map for rendering
+    std::unique_ptr<::WorldEditor::ClientWorld> m_clientWorld;
+    std::unique_ptr<::WorldEditor::ServerWorld> m_serverWorld;
+    std::unique_ptr<::WorldEditor::World> m_gameWorld;  // Static map for rendering
     
-    // Input state
+    // Gameplay controller (shared logic with editor)
+    std::unique_ptr<::WorldEditor::GameplayController> m_gameplayController;
+    
+    // Input state for GameplayController
+    ::WorldEditor::GameplayInput m_currentInput;
+    
+    // Network input state
     f32 m_lastInputSendTime = 0.0f;
     u32 m_inputSequence = 0;
     
@@ -435,7 +447,7 @@ public:
     auth::AuthClient* GetAuthClient() { return m_authClient.get(); }
     
     // Global NetworkClient (shared across states - single connection to game server)
-    WorldEditor::Network::NetworkClient* GetNetworkClient() { return m_networkClient.get(); }
+    ::WorldEditor::Network::NetworkClient* GetNetworkClient() { return m_networkClient.get(); }
     bool ConnectToGameServer(const std::string& ip, u16 port, const std::string& username);
     void DisconnectFromGameServer();
     bool IsConnectedToGameServer() const;
@@ -476,7 +488,7 @@ private:
     std::unique_ptr<auth::AuthClient> m_authClient;
     
     // Global NetworkClient (shared across all states - single connection to game server)
-    std::unique_ptr<WorldEditor::Network::NetworkClient> m_networkClient;
+    std::unique_ptr<::WorldEditor::Network::NetworkClient> m_networkClient;
     std::string m_gameServerIp;
     u16 m_gameServerPort = 0;
     u8 m_playerTeamSlot = 0;  // 0-4 = Radiant, 5-9 = Dire

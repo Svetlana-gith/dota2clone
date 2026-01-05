@@ -247,6 +247,14 @@ void CPanel2D::InvalidateStyle() {
 }
 
 void CPanel2D::ComputeStyle() {
+    // Debug: log style computation
+    static int styleLogCount = 0;
+    if (styleLogCount < 10) {
+        bool hasInlineBg = m_inlineStyle.backgroundColor.has_value();
+        LOG_INFO("CPanel2D::ComputeStyle id='{}' hasInlineBg={}", m_id, hasInlineBg);
+        styleLogCount++;
+    }
+    
     // Apply styles from global stylesheet
     m_computedStyle = CStyleManager::Instance().ComputeStyle(this);
     m_computedStyle.Merge(m_inlineStyle);
@@ -613,6 +621,17 @@ void CPanel2D::Render(CUIRenderer* renderer) {
     
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
     if (opacity <= 0) return;
+    
+    // Debug: log first few panel renders
+    static int renderLogCount = 0;
+    if (renderLogCount < 10) {
+        bool hasBg = m_computedStyle.backgroundColor.has_value();
+        bool hasInlineBg = m_inlineStyle.backgroundColor.has_value();
+        LOG_INFO("CPanel2D::Render id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f}) hasBg={} hasInlineBg={}",
+            m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height,
+            hasBg, hasInlineBg);
+        renderLogCount++;
+    }
     
     // Draw background
     if (m_computedStyle.backgroundColor.has_value()) {

@@ -77,6 +77,9 @@ public:
     D3D12_GPU_DESCRIPTOR_HANDLE GetSrvGpuHandle() const {
         return m_srvHeap->GetGPUDescriptorHandleForHeapStart();
     }
+    
+    // Current render target view (for UI rendering)
+    D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRenderTargetView() const;
 
     // Offscreen viewport SRV (descriptor index 0 in SRV heap).
     D3D12_GPU_DESCRIPTOR_HANDLE GetViewportSrvGpuHandle() const { return m_viewportSrvGpuHandle; }
@@ -205,7 +208,6 @@ private:
     void EnsureViewportRenderTarget(uint32_t width, uint32_t height);
     void EnsureViewportDepthStencil(uint32_t width, uint32_t height);
     void PopulateCommandList();
-    D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRenderTargetView() const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetViewportRenderTargetView() const;
     
 #ifdef DX12_ENABLE_DEBUG_LAYER

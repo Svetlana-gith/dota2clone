@@ -212,6 +212,7 @@ target_link_libraries(${PROJECT_NAME}
     world_editor_world
     world_editor_renderer
     world_editor_ui
+    world_editor_gameplay
     glm::glm
     imgui
     dbghelp

@@ -33,5 +33,8 @@ add_subdirectory(properties)
 # UI library (editor-only for now)
 add_subdirectory(ui)
 
+# Gameplay library (shared logic for Editor and Game)
+add_subdirectory(gameplay)
+
 # Game module with Panorama UI
 add_subdirectory(game)

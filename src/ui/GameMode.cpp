@@ -30,10 +30,18 @@ void GameMode::draw(World& world) {
     // Time controls
     drawTimeControls();
 
-    // Visual options
-    ImGui::Checkbox("Show Tower Range", &showTowerRange_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Ability Indicators", &showAbilityIndicators_);
+    // Visual options - sync with controller if available
+    if (controller_) {
+        ImGui::Checkbox("Show Tower Range", &controller_->showTowerRange);
+        ImGui::SameLine();
+        ImGui::Checkbox("Show Ability Indicators", &controller_->showAbilityIndicators);
+        showTowerRange_ = controller_->showTowerRange;
+        showAbilityIndicators_ = controller_->showAbilityIndicators;
+    } else {
+        ImGui::Checkbox("Show Tower Range", &showTowerRange_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Show Ability Indicators", &showAbilityIndicators_);
+    }
 
     // Stop & reset (clears runtime units/projectiles and resets stats/time)
     if (ImGui::Button("Stop & Reset")) {
@@ -63,10 +71,16 @@ void GameMode::draw(World& world) {
 }
 
 void GameMode::stopAndReset(World& world) {
-    // Reset local game mode state
-    paused_ = false;
-    timeScale_ = 1.0f;
-    stats_ = GameStats{};
+    // Use controller's reset if available
+    if (controller_) {
+        controller_->resetGame();
+    } else {
+        // Fallback: reset local state
+        paused_ = false;
+        timeScale_ = 1.0f;
+        fallbackStats_ = GameplayStats{};
+    }
+    
     followCreep_ = false;
     followedCreep_ = INVALID_ENTITY;
 
@@ -132,7 +146,13 @@ void GameMode::stopAndReset(World& world) {
 }
 
 void GameMode::update(World& world, f32 deltaTime) {
-    // Update statistics every frame (even when paused)
+    // Controller handles stats updates if available
+    if (controller_) {
+        // Controller is updated externally; just sync game mode active state
+        return;
+    }
+    
+    // Fallback: update stats locally when no controller
     updateStats(world);
     
     if (!gameModeActive_ || paused_) {
@@ -143,23 +163,32 @@ void GameMode::update(World& world, f32 deltaTime) {
     f32 scaledDeltaTime = deltaTime * timeScale_;
     
     // Update game time
-    stats_.gameTime += scaledDeltaTime;
-    
-    // Note: world.update() is called from main.cpp with scaledDeltaTime
-    // This function just tracks statistics and game time
+    fallbackStats_.gameTime += scaledDeltaTime;
 }
 
 void GameMode::drawTimeControls() {
     ImGui::Text("Time Controls");
     
+    bool isPausedNow = isPaused();
+    f32 currentTimeScale = getTimeScale();
+    const GameplayStats& stats = getStats();
+    
     // Pause/Resume button
-    if (paused_) {
+    if (isPausedNow) {
         if (ImGui::Button("Resume")) {
-            paused_ = false;
+            if (controller_) {
+                controller_->resumeGame();
+            } else {
+                paused_ = false;
+            }
         }
     } else {
         if (ImGui::Button("Pause")) {
-            paused_ = true;
+            if (controller_) {
+                controller_->pauseGame();
+            } else {
+                paused_ = true;
+            }
         }
     }
     
@@ -167,47 +196,60 @@ void GameMode::drawTimeControls() {
     
     // Time scale slider
     ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::SliderFloat("Speed", &timeScale_, 0.1f, 5.0f, "%.1fx")) {
-        timeScale_ = std::clamp(timeScale_, 0.1f, 5.0f);
+    f32 tempTimeScale = currentTimeScale;
+    if (ImGui::SliderFloat("Speed", &tempTimeScale, 0.1f, 5.0f, "%.1fx")) {
+        tempTimeScale = std::clamp(tempTimeScale, 0.1f, 5.0f);
+        if (controller_) {
+            controller_->setTimeScale(tempTimeScale);
+        } else {
+            timeScale_ = tempTimeScale;
+        }
     }
     
     ImGui::SameLine();
     if (ImGui::Button("1x")) {
-        timeScale_ = 1.0f;
+        if (controller_) controller_->setTimeScale(1.0f);
+        else timeScale_ = 1.0f;
     }
     ImGui::SameLine();
     if (ImGui::Button("2x")) {
-        timeScale_ = 2.0f;
+        if (controller_) controller_->setTimeScale(2.0f);
+        else timeScale_ = 2.0f;
     }
     ImGui::SameLine();
     if (ImGui::Button("5x")) {
-        timeScale_ = 5.0f;
+        if (controller_) controller_->setTimeScale(5.0f);
+        else timeScale_ = 5.0f;
     }
     
     // Game time display
-    ImGui::Text("Game Time: %.1f seconds", stats_.gameTime);
+    ImGui::Text("Game Time: %.1f seconds", stats.gameTime);
 }
 
 void GameMode::drawStatsPanel(World& world) {
-    updateStats(world);
+    if (!controller_) {
+        updateStats(world);
+    }
+    
+    const GameplayStats& stats = getStats();
     
     ImGui::Text("Radiant (Team 1)");
-    ImGui::BulletText("Creeps: %d", stats_.radiantCreeps);
-    ImGui::BulletText("Towers: %d", stats_.radiantTowers);
-    ImGui::BulletText("Buildings: %d", stats_.radiantBuildings);
+    ImGui::BulletText("Creeps: %d", stats.radiantCreeps);
+    ImGui::BulletText("Towers: %d", stats.radiantTowers);
+    ImGui::BulletText("Buildings: %d", stats.radiantBuildings);
     
     ImGui::Separator();
     
     ImGui::Text("Dire (Team 2)");
-    ImGui::BulletText("Creeps: %d", stats_.direCreeps);
-    ImGui::BulletText("Towers: %d", stats_.direTowers);
-    ImGui::BulletText("Buildings: %d", stats_.direBuildings);
+    ImGui::BulletText("Creeps: %d", stats.direCreeps);
+    ImGui::BulletText("Towers: %d", stats.direTowers);
+    ImGui::BulletText("Buildings: %d", stats.direBuildings);
     
     ImGui::Separator();
     
     ImGui::Text("Total");
-    ImGui::BulletText("Creeps Spawned: %d", stats_.totalCreepsSpawned);
-    ImGui::BulletText("Creeps Killed: %d", stats_.totalCreepsKilled);
+    ImGui::BulletText("Creeps Spawned: %d", stats.totalCreepsSpawned);
+    ImGui::BulletText("Creeps Killed: %d", stats.totalCreepsKilled);
 }
 
 void GameMode::drawCreepInfo(World& world) {
@@ -349,15 +391,18 @@ void GameMode::drawTowerInfo(World& world) {
 }
 
 void GameMode::updateStats(World& world) {
+    // If controller is available, it handles stats
+    if (controller_) return;
+    
     auto& reg = world.getEntityManager().getRegistry();
     
     // Reset counters
-    stats_.radiantCreeps = 0;
-    stats_.direCreeps = 0;
-    stats_.radiantTowers = 0;
-    stats_.direTowers = 0;
-    stats_.radiantBuildings = 0;
-    stats_.direBuildings = 0;
+    fallbackStats_.radiantCreeps = 0;
+    fallbackStats_.direCreeps = 0;
+    fallbackStats_.radiantTowers = 0;
+    fallbackStats_.direTowers = 0;
+    fallbackStats_.radiantBuildings = 0;
+    fallbackStats_.direBuildings = 0;
     
     // Count creeps
     auto creepView = reg.view<CreepComponent>();
@@ -365,9 +410,9 @@ void GameMode::updateStats(World& world) {
         const auto& creep = creepView.get<CreepComponent>(entity);
         if (creep.state != CreepState::Dead) {
             if (creep.teamId == 1) {
-                stats_.radiantCreeps++;
+                fallbackStats_.radiantCreeps++;
             } else if (creep.teamId == 2) {
-                stats_.direCreeps++;
+                fallbackStats_.direCreeps++;
             }
         }
     }
@@ -379,21 +424,26 @@ void GameMode::updateStats(World& world) {
         
         if (objComp.type == ObjectType::Tower) {
             if (objComp.teamId == 1) {
-                stats_.radiantTowers++;
+                fallbackStats_.radiantTowers++;
             } else if (objComp.teamId == 2) {
-                stats_.direTowers++;
+                fallbackStats_.direTowers++;
             }
         } else if (objComp.type == ObjectType::Building) {
             if (objComp.teamId == 1) {
-                stats_.radiantBuildings++;
+                fallbackStats_.radiantBuildings++;
             } else if (objComp.teamId == 2) {
-                stats_.direBuildings++;
+                fallbackStats_.direBuildings++;
             }
         }
     }
 }
 
 Entity GameMode::findNearestCreep(World& world, const Vec3& position) {
+    // Use controller if available
+    if (controller_) {
+        return controller_->findNearestCreep(position);
+    }
+    
     Entity nearest = INVALID_ENTITY;
     f32 nearestDist = std::numeric_limits<f32>::max();
     
@@ -421,6 +471,12 @@ Entity GameMode::findNearestCreep(World& world, const Vec3& position) {
 
 void GameMode::updateCameraFollow(World& world, EditorCamera& camera) {
     if (!followCreep_ || followedCreep_ == INVALID_ENTITY) {
+        return;
+    }
+    
+    // Use controller's focusOnEntity if available
+    if (controller_) {
+        controller_->focusOnEntity(followedCreep_);
         return;
     }
     
@@ -475,7 +531,8 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
     };
     
     // Draw tower attack range circles
-    if (showTowerRange_) {
+    bool drawTowerRange = controller_ ? controller_->showTowerRange : showTowerRange_;
+    if (drawTowerRange) {
         auto towerView = reg.view<ObjectComponent, TransformComponent>();
         for (auto entity : towerView) {
             const auto& obj = towerView.get<ObjectComponent>(entity);
@@ -504,6 +561,7 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
     }
     
     // Draw hero HP/MP bars and ability indicators
+    bool drawAbilityIndicators = controller_ ? controller_->showAbilityIndicators : showAbilityIndicators_;
     auto heroView = reg.view<HeroComponent, TransformComponent>();
     for (auto entity : heroView) {
         const auto& hero = heroView.get<HeroComponent>(entity);
@@ -520,47 +578,46 @@ void GameMode::drawUnitHealthBars(World& world, const Mat4& viewProj, const Vec2
         drawList->AddText(ImVec2(screenPos.x - nameSize.x * 0.5f, screenPos.y - 40), 
             IM_COL32(255, 255, 255, 255), hero.heroName.c_str());
         
-        // HP bar (larger for heroes)
+        // HP bar
         const f32 barWidth = 80.0f;
         const f32 barHeight = 10.0f;
-        f32 hpPct = hero.maxHealth > 0 ? hero.currentHealth / hero.maxHealth : 0;
-        hpPct = std::clamp(hpPct, 0.0f, 1.0f);
+        const f32 mpHeight = 6.0f;
         
         ImVec2 hpMin(screenPos.x - barWidth * 0.5f, screenPos.y - 25);
         ImVec2 hpMax(screenPos.x + barWidth * 0.5f, screenPos.y - 25 + barHeight);
+        
+        // Background
         drawList->AddRectFilled(hpMin, hpMax, IM_COL32(0, 0, 0, 200));
-        drawList->AddRectFilled(hpMin, ImVec2(hpMin.x + barWidth * hpPct, hpMax.y), 
-            IM_COL32((u8)(255 * (1 - hpPct)), (u8)(255 * hpPct), 0, 255));
+        
+        // HP fill
+        f32 hpPct = hero.maxHealth > 0 ? std::clamp(hero.currentHealth / hero.maxHealth, 0.0f, 1.0f) : 0;
+        ImU32 hpColor = (hero.teamId == 1) ? IM_COL32(50, 200, 50, 255) : IM_COL32(200, 50, 50, 255);
+        drawList->AddRectFilled(hpMin, ImVec2(hpMin.x + barWidth * hpPct, hpMax.y), hpColor);
+        
+        // Border
         drawList->AddRect(hpMin, hpMax, IM_COL32(255, 255, 255, 255));
         
-        // MP bar (blue, smaller)
-        f32 mpPct = hero.maxMana > 0 ? hero.currentMana / hero.maxMana : 0;
-        mpPct = std::clamp(mpPct, 0.0f, 1.0f);
+        // MP bar
+        ImVec2 mpMin(screenPos.x - barWidth * 0.5f, hpMax.y + 2);
+        ImVec2 mpMax(screenPos.x + barWidth * 0.5f, hpMax.y + 2 + mpHeight);
         
-        ImVec2 mpMin(screenPos.x - barWidth * 0.5f, screenPos.y - 12);
-        ImVec2 mpMax(screenPos.x + barWidth * 0.5f, screenPos.y - 12 + 6);
         drawList->AddRectFilled(mpMin, mpMax, IM_COL32(0, 0, 0, 200));
-        drawList->AddRectFilled(mpMin, ImVec2(mpMin.x + barWidth * mpPct, mpMax.y), 
-            IM_COL32(50, 100, 200, 255));
         
-        // Level indicator
-        char lvlText[16];
-        snprintf(lvlText, sizeof(lvlText), "Lv%d", hero.level);
-        drawList->AddText(ImVec2(screenPos.x - barWidth * 0.5f - 25, screenPos.y - 25), 
-            IM_COL32(255, 215, 0, 255), lvlText);
+        f32 mpPct = hero.maxMana > 0 ? std::clamp(hero.currentMana / hero.maxMana, 0.0f, 1.0f) : 0;
+        drawList->AddRectFilled(mpMin, ImVec2(mpMin.x + barWidth * mpPct, mpMax.y), IM_COL32(50, 100, 200, 255));
+        drawList->AddRect(mpMin, mpMax, IM_COL32(150, 150, 255, 255));
         
         // Draw ability range indicator if casting
-        if (hero.currentCastingAbility >= 0 && hero.currentCastingAbility < 6) {
+        if (drawAbilityIndicators && hero.currentCastingAbility >= 0 && hero.currentCastingAbility < 6) {
             const auto& ability = hero.abilities[hero.currentCastingAbility];
             if (ability.data.radius > 0) {
-                // Draw AoE indicator
-                const int segs = 24;
+                const int segments = 24;
                 f32 r = ability.data.radius;
                 Vec3 center = hero.targetPosition;
                 
-                for (int i = 0; i < segs; i++) {
-                    f32 a1 = (f32)i / segs * 2.0f * 3.14159f;
-                    f32 a2 = (f32)(i + 1) / segs * 2.0f * 3.14159f;
+                for (int i = 0; i < segments; i++) {
+                    f32 a1 = (f32)i / segments * 2.0f * 3.14159f;
+                    f32 a2 = (f32)(i + 1) / segments * 2.0f * 3.14159f;
                     
                     Vec3 p1 = center + Vec3(std::cos(a1) * r, 0.2f, std::sin(a1) * r);
                     Vec3 p2 = center + Vec3(std::cos(a2) * r, 0.2f, std::sin(a2) * r);
@@ -647,6 +704,8 @@ void GameMode::drawTopBar(World& world, const Vec2& viewportSize, const ImVec2& 
         return;
     }
     
+    const GameplayStats& stats = getStats();
+    
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
     
     // Top bar dimensions
@@ -667,8 +726,8 @@ void GameMode::drawTopBar(World& world, const Vec2& viewportSize, const ImVec2& 
     drawList->AddLine(ImVec2(barMin.x, barMax.y), ImVec2(barMax.x, barMax.y), IM_COL32(60, 60, 70, 255), 2.0f);
     
     // Draw time in center
-    i32 minutes = static_cast<i32>(stats_.gameTime) / 60;
-    i32 seconds = static_cast<i32>(stats_.gameTime) % 60;
+    i32 minutes = static_cast<i32>(stats.gameTime) / 60;
+    i32 seconds = static_cast<i32>(stats.gameTime) % 60;
     char timeText[16];
     snprintf(timeText, sizeof(timeText), "%02d:%02d", minutes, seconds);
     

@@ -1,5 +1,6 @@
 #include "EditorUI.h"
 #include "GameMode.h"
+#include "gameplay/GameplayController.h"
 
 #include "EditorCamera.h"
 #include "world/World.h"
@@ -380,8 +381,11 @@ void EditorUI::drawToolbar(World& world) {
             if (ImGui::Button("Stop", ImVec2(50, 28))) {
                 if (gameMode_) {
                     gameMode_->setGameModeActive(false);
-                    world.resetGame();
                 }
+                if (gameplayController_) {
+                    gameplayController_->resetGame();
+                }
+                world.resetGame();
             }
             ImGui::PopStyleColor();
         } else {
@@ -389,8 +393,11 @@ void EditorUI::drawToolbar(World& world) {
             if (ImGui::Button("Play", ImVec2(50, 28))) {
                 if (gameMode_) {
                     gameMode_->setGameModeActive(true);
-                    world.startGame(); // Start creep spawning!
                 }
+                if (gameplayController_) {
+                    gameplayController_->startGame();
+                }
+                world.startGame(); // Start creep spawning!
             }
             ImGui::PopStyleColor();
         }
@@ -520,9 +527,14 @@ void EditorUI::drawToolsPanel(World& world) {
 void EditorUI::draw(World& world) {
     ensureSelectionValid(world);
     
-    // Initialize game mode if needed
+    // Initialize gameplay controller and game mode if needed
+    if (!gameplayController_) {
+        gameplayController_ = std::make_unique<GameplayController>();
+        gameplayController_->setWorld(&world);
+    }
     if (!gameMode_) {
         gameMode_ = std::make_unique<GameMode>();
+        gameMode_->setController(gameplayController_.get());
     }
 
     // Apply modern dark theme
