@@ -1,6 +1,7 @@
 #include "CPanel2D.h"
 #include "CUIRenderer.h"
 #include "CStyleSheet.h"
+#include "CUIEngine.h"
 #include <algorithm>
 
 #ifdef min
@@ -133,7 +134,7 @@ void CPanel2D::MoveChildAfter(CPanel2D* child, CPanel2D* after) {
 
 CPanel2D* CPanel2D::FindChild(const std::string& id) {
     for (auto& child : m_children) {
-        if (child->m_id == id) return child.get();
+        if (child && child->m_id == id) return child.get();
     }
     return nullptr;
 }
@@ -141,8 +142,10 @@ CPanel2D* CPanel2D::FindChild(const std::string& id) {
 CPanel2D* CPanel2D::FindChildTraverse(const std::string& id) {
     if (m_id == id) return this;
     for (auto& child : m_children) {
-        if (auto found = child->FindChildTraverse(id)) {
-            return found;
+        if (child) {
+            if (auto found = child->FindChildTraverse(id)) {
+                return found;
+            }
         }
     }
     return nullptr;
@@ -152,8 +155,10 @@ std::vector<CPanel2D*> CPanel2D::FindChildrenWithClass(const std::string& classN
     std::vector<CPanel2D*> result;
     if (HasClass(className)) result.push_back(this);
     for (auto& child : m_children) {
-        auto childResults = child->FindChildrenWithClass(className);
-        result.insert(result.end(), childResults.begin(), childResults.end());
+        if (child) {
+            auto childResults = child->FindChildrenWithClass(className);
+            result.insert(result.end(), childResults.begin(), childResults.end());
+        }
     }
     return result;
 }
@@ -242,7 +247,7 @@ void CPanel2D::ApplyStyles(const CStyleSheet* stylesheet) {
 void CPanel2D::InvalidateStyle() {
     m_styleInvalid = true;
     for (auto& child : m_children) {
-        child->InvalidateStyle();
+        if (child) child->InvalidateStyle();
     }
 }
 
@@ -386,7 +391,7 @@ void CPanel2D::PerformLayout(const Rect2D& parentBounds) {
     f32 childY = m_contentBounds.y;
     
     for (auto& child : m_children) {
-        if (!child->IsVisible()) continue;
+        if (!child || !child->IsVisible()) continue;
         
         // Get child margins
         f32 marginLeft = child->m_computedStyle.marginLeft.has_value() ? 
@@ -610,17 +615,27 @@ void CPanel2D::Update(f32 deltaTime) {
             }),
         m_activeAnimations.end());
     
-    // Update children
-    for (auto& child : m_children) {
-        child->Update(deltaTime);
+    // Update children - copy list to avoid issues if tree is modified
+    auto children = m_children;
+    for (auto& child : children) {
+        if (child) {
+            child->Update(deltaTime);
+        }
     }
 }
 
 void CPanel2D::Render(CUIRenderer* renderer) {
-    if (!m_visible) return;
+    if (!m_visible || !renderer) return;
     
     f32 opacity = m_computedStyle.opacity.value_or(1.0f);
     if (opacity <= 0) return;
+    
+    // Debug logging for hero buttons when pressed
+    if (m_pressed && m_id.find("HeroBtn") != std::string::npos) {
+        LOG_INFO("CPanel2D::Render PRESSED id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f})",
+            m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height);
+        spdlog::default_logger()->flush();
+    }
     
     // Debug: log first few panel renders
     static int renderLogCount = 0;
@@ -679,7 +694,7 @@ void CPanel2D::Render(CUIRenderer* renderer) {
     
     // Render children
     for (auto& child : m_children) {
-        child->Render(renderer);
+        if (child) child->Render(renderer);
     }
     
     // Remove clipping
@@ -703,9 +718,12 @@ bool CPanel2D::OnMouseMove(f32 x, f32 y) {
         DispatchEvent(event);
     }
     
-    // Propagate to children
-    for (auto& child : m_children) {
-        child->OnMouseMove(x, y);
+    // Propagate to children - copy list to avoid issues if tree is modified
+    auto children = m_children;
+    for (auto& child : children) {
+        if (child) {
+            child->OnMouseMove(x, y);
+        }
     }
     
     return m_hovered;
@@ -714,13 +732,40 @@ bool CPanel2D::OnMouseMove(f32 x, f32 y) {
 bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
     if (!m_enabled || !m_visible) return false;
     
+    // Debug: log entry with depth tracking
+    static thread_local int s_mouseDownDepth = 0;
+    s_mouseDownDepth++;
+    if (s_mouseDownDepth > 100) {
+        LOG_ERROR("OnMouseDown recursion too deep! id='{}' depth={}", m_id, s_mouseDownDepth);
+        spdlog::default_logger()->flush();
+        s_mouseDownDepth--;
+        return false;
+    }
+    
+    // Copy children list - tree may be modified during iteration
+    std::vector<std::shared_ptr<CPanel2D>> children;
+    children.reserve(m_children.size());
+    for (const auto& c : m_children) {
+        if (c) children.push_back(c);
+    }
+    
     // Check children first (reverse for z-order)
-    for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
-        if ((*it)->OnMouseDown(x, y, button)) return true;
+    for (size_t i = children.size(); i > 0; --i) {
+        auto& child = children[i - 1];
+        if (child && child.get()) {
+            if (child->OnMouseDown(x, y, button)) {
+                s_mouseDownDepth--;
+                return true;
+            }
+        }
     }
     
     if (IsPointInPanel(x, y) && m_acceptsInput) {
         m_pressed = true;
+        
+        // Set focus via CUIEngine so it tracks the focused panel
+        Panorama::CUIEngine::Instance().SetFocus(this);
+        
         PanelEvent event;
         event.type = PanelEventType::OnMouseDown;
         event.target = this;
@@ -728,8 +773,10 @@ bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
         event.mouseY = y;
         event.button = button;
         DispatchEvent(event);
+        s_mouseDownDepth--;
         return true;
     }
+    s_mouseDownDepth--;
     return false;
 }
 
@@ -737,9 +784,19 @@ bool CPanel2D::OnMouseUp(f32 x, f32 y, i32 button) {
     bool wasPressed = m_pressed;
     m_pressed = false;
     
+    // Debug logging only for hero buttons that were pressed
+    if (wasPressed && m_id.find("HeroBtn") != std::string::npos) {
+        LOG_INFO("OnMouseUp id='{}' wasPressed=true pos=({:.0f},{:.0f})", m_id, x, y);
+        spdlog::default_logger()->flush();
+    }
+    
+    // Copy children list - callback may modify the tree
+    auto children = m_children;
+    
     // Check children first
-    for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
-        if ((*it)->OnMouseUp(x, y, button)) return true;
+    for (size_t i = 0; i < children.size(); ++i) {
+        auto& child = children[children.size() - 1 - i]; // reverse order
+        if (child && child->OnMouseUp(x, y, button)) return true;
     }
     
     if (wasPressed && IsPointInPanel(x, y)) {
@@ -762,8 +819,11 @@ bool CPanel2D::OnMouseUp(f32 x, f32 y, i32 button) {
 bool CPanel2D::OnMouseWheel(f32 x, f32 y, i32 delta) {
     if (!IsPointInPanel(x, y)) return false;
     
-    for (auto it = m_children.rbegin(); it != m_children.rend(); ++it) {
-        if ((*it)->OnMouseWheel(x, y, delta)) return true;
+    // Copy children list - tree may be modified during iteration
+    auto children = m_children;
+    for (size_t i = children.size(); i > 0; --i) {
+        auto& child = children[i - 1];
+        if (child && child->OnMouseWheel(x, y, delta)) return true;
     }
     
     PanelEvent event;

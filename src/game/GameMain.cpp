@@ -71,9 +71,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)lpCmdLine;
     (void)nCmdShow;
     
-    // Initialize spdlog to file
+    // Initialize spdlog to file with PID to separate multiple clients
     try {
-        auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("logs/game.log", true);
+        DWORD pid = GetCurrentProcessId();
+        std::string logPath = "logs/game_" + std::to_string(pid) + ".log";
+        auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logPath, true);
         auto logger = std::make_shared<spdlog::logger>("game", file_sink);
         spdlog::set_default_logger(logger);
         spdlog::set_level(spdlog::level::debug);
@@ -191,7 +193,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         Game::DebugConsole::Instance().Update(deltaTime);
         
         // Render
-        Render();
+        try {
+            Render();
+        } catch (const std::exception& e) {
+            LOG_ERROR("Render exception: {}", e.what());
+            spdlog::default_logger()->flush();
+        } catch (...) {
+            LOG_ERROR("Render unknown exception");
+            spdlog::default_logger()->flush();
+        }
     }
     
     // Cleanup

@@ -1,5 +1,6 @@
 #include "MainMenuBottomBar.h"
 #include "../panorama/CPanel2D.h"
+#include "../../DebugConsole.h"
 
 namespace Game {
 
@@ -72,6 +73,23 @@ void MainMenuBottomBar::Create(Panorama::CPanel2D* parent, f32 screenWidth, f32 
     m_gameModeLabel->GetStyle().marginLeft = Panorama::Length::Px(S(250));
     m_gameModeLabel->GetStyle().marginTop = Panorama::Length::Px(S(28));
     m_bottomBar->AddChild(m_gameModeLabel);
+    
+    // Play button (right side)
+    m_playButton = std::make_shared<Panorama::CButton>("PLAY DOTA", "PlayBtn");
+    m_playButton->GetStyle().width = Panorama::Length::Px(S(140));
+    m_playButton->GetStyle().height = Panorama::Length::Px(S(45));
+    m_playButton->GetStyle().backgroundColor = Panorama::Color(0.18f, 0.45f, 0.18f, 1.0f);
+    m_playButton->GetStyle().borderRadius = S(3);
+    m_playButton->GetStyle().fontSize = 16.0f;
+    m_playButton->GetStyle().color = Panorama::Color::White();
+    m_playButton->GetStyle().marginLeft = Panorama::Length::Px(contentWidth / S(1) - S(160));
+    m_playButton->GetStyle().marginTop = Panorama::Length::Px(S(12));
+    m_playButton->SetOnActivate([this]() {
+        if (m_onPlayClicked) {
+            m_onPlayClicked();
+        }
+    });
+    m_bottomBar->AddChild(m_playButton);
 }
 
 void MainMenuBottomBar::Destroy() {
@@ -84,6 +102,7 @@ void MainMenuBottomBar::Destroy() {
     m_gameModeLabel.reset();
     m_partySlots.clear();
     m_addPartyButton.reset();
+    m_playButton.reset();
 }
 
 void MainMenuBottomBar::SetGameMode(const std::string& mode) {
@@ -97,6 +116,18 @@ void MainMenuBottomBar::SetPartyMembers(int count) {
         if (m_partySlots[i]) {
             m_partySlots[i]->SetVisible(static_cast<int>(i) < count);
         }
+    }
+}
+
+void MainMenuBottomBar::SetPlayButtonVisible(bool visible) {
+    if (m_playButton) {
+        m_playButton->SetVisible(visible);
+    }
+}
+
+void MainMenuBottomBar::SetPlayButtonText(const std::string& text) {
+    if (m_playButton) {
+        m_playButton->SetText(text);
     }
 }
 

@@ -161,7 +161,6 @@ void MatchmakingPanel::Create(Panorama::CPanel2D* parent, Panorama::CPanel2D* bo
 }
 
 void MatchmakingPanel::Destroy() {
-    m_playButton.reset();
     m_findingPanel.reset();
     m_findingLabel.reset();
     m_findingTimeLabel.reset();
@@ -189,7 +188,6 @@ void MatchmakingPanel::ShowFindingUI() {
         m_findingTimeLabel->SetText("00:00");
         m_findingTimeLabel->SetVisible(true);
     }
-    if (m_playButton) m_playButton->SetVisible(false);
 }
 
 void MatchmakingPanel::HideFindingUI() {
@@ -226,14 +224,6 @@ void MatchmakingPanel::ShowAcceptOverlay(const WorldEditor::Matchmaking::LobbyIn
 
 void MatchmakingPanel::HideAcceptOverlay() {
     if (m_acceptOverlay) m_acceptOverlay->SetVisible(false);
-}
-
-void MatchmakingPanel::ShowPlayButton() {
-    if (m_playButton) m_playButton->SetVisible(true);
-}
-
-void MatchmakingPanel::HidePlayButton() {
-    if (m_playButton) m_playButton->SetVisible(false);
 }
 
 bool MatchmakingPanel::IsSearching() const {

@@ -22,8 +22,6 @@ public:
     void HideFindingUI();
     void ShowAcceptOverlay(const WorldEditor::Matchmaking::LobbyInfo& lobby);
     void HideAcceptOverlay();
-    void ShowPlayButton();
-    void HidePlayButton();
     
     bool IsSearching() const;
     
@@ -34,17 +32,11 @@ public:
     void OnLocalPlayerAccepted(u64 selfId, const std::vector<u64>& playerIds);
     
     // Callbacks
-    void SetOnPlayClicked(std::function<void()> cb) { m_onPlayClicked = cb; }
     void SetOnCancelClicked(std::function<void()> cb) { m_onCancelClicked = cb; }
     void SetOnAcceptClicked(std::function<void()> cb) { m_onAcceptClicked = cb; }
     void SetOnDeclineClicked(std::function<void()> cb) { m_onDeclineClicked = cb; }
     
-    // Access to play button for visibility checks
-    std::shared_ptr<Panorama::CButton> GetPlayButton() { return m_playButton; }
-    
 private:
-    std::shared_ptr<Panorama::CButton> m_playButton;
-    
     // Finding match panel
     std::shared_ptr<Panorama::CPanel2D> m_findingPanel;
     std::shared_ptr<Panorama::CLabel> m_findingLabel;
@@ -67,7 +59,6 @@ private:
     std::shared_ptr<Panorama::CPanel2D> m_acceptStatusPanel;
     std::vector<std::shared_ptr<Panorama::CPanel2D>> m_acceptCubes;
     
-    std::function<void()> m_onPlayClicked;
     std::function<void()> m_onCancelClicked;
     std::function<void()> m_onAcceptClicked;
     std::function<void()> m_onDeclineClicked;

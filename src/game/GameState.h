@@ -169,6 +169,9 @@ private:
 
     // Matchmaking (Dota-like; no manual server selection)
     std::unique_ptr<WorldEditor::Matchmaking::MatchmakingClient> m_mmClient;
+    
+    // Guard against duplicate MatchReady handling
+    bool m_matchReadyHandled = false;
 };
 
 // ============ Loading State ============

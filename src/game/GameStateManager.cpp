@@ -275,6 +275,9 @@ void GameStateManager::OnMouseDown(f32 x, f32 y, i32 button) {
 }
 
 void GameStateManager::OnMouseUp(f32 x, f32 y, i32 button) {
+    LOG_INFO("GameStateManager::OnMouseUp START pos=({:.0f},{:.0f}) button={}", x, y, button);
+    spdlog::default_logger()->flush();
+    
     // Console gets priority for mouse events when visible
     if (DebugConsole::Instance().IsVisible()) {
         if (DebugConsole::Instance().OnMouseUp(x, y)) {
@@ -283,7 +286,11 @@ void GameStateManager::OnMouseUp(f32 x, f32 y, i32 button) {
     }
     
     if (!m_stateStack.empty()) {
+        LOG_INFO("GameStateManager::OnMouseUp calling state->OnMouseUp");
+        spdlog::default_logger()->flush();
         m_stateStack.back()->OnMouseUp(x, y, button);
+        LOG_INFO("GameStateManager::OnMouseUp state->OnMouseUp returned");
+        spdlog::default_logger()->flush();
     }
 }
 

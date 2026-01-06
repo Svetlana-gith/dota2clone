@@ -94,7 +94,8 @@ void MainMenuContent::CreateProfileColumn(Panorama::CPanel2D* main, f32 contentW
     m_profilePanel->AddChild(statsLabel);
     
     // ===== FRIENDS PANEL =====
-    m_friendsPanel = P("Friends", 0, contentHeight - S(156), panel);
+    // Fixed height instead of filling to bottom
+    m_friendsPanel = P("Friends", 0, 280, panel);
     m_friendsPanel->GetStyle().borderRadius = S(3);
     m_friendsPanel->GetStyle().marginTop = Panorama::Length::Px(S(146));
     leftCol->AddChild(m_friendsPanel);

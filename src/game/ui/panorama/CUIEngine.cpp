@@ -143,11 +143,8 @@ void CUIEngine::Update(f32 deltaTime) {
 void CUIEngine::UpdatePanelRecursive(CPanel2D* panel, f32 deltaTime) {
     if (!panel) return;
     
+    // CPanel2D::Update already handles children recursively
     panel->Update(deltaTime);
-    
-    for (const auto& child : panel->GetChildren()) {
-        UpdatePanelRecursive(child.get(), deltaTime);
-    }
 }
 
 void CUIEngine::Render() {
@@ -185,11 +182,13 @@ void CUIEngine::UpdateHoverState() {
 CPanel2D* CUIEngine::FindPanelAtPoint(CPanel2D* root, f32 x, f32 y) {
     if (!root || !root->IsVisible() || !root->IsEnabled()) return nullptr;
     
-    // Check children in reverse order (top to bottom in z-order)
-    const auto& children = root->GetChildren();
+    // Copy children list to avoid issues if tree is modified during iteration
+    auto children = root->GetChildren();
     for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        if (auto* found = FindPanelAtPoint(it->get(), x, y)) {
-            return found;
+        if (*it) {
+            if (auto* found = FindPanelAtPoint(it->get(), x, y)) {
+                return found;
+            }
         }
     }
     
@@ -205,7 +204,8 @@ void CUIEngine::OnMouseMove(f32 x, f32 y) {
     m_mouseX = x;
     m_mouseY = y;
     
-    UpdateHoverState();
+    // Disabled - causes crash due to tree modification during iteration
+    // UpdateHoverState();
     
     if (m_root) {
         m_root->OnMouseMove(x, y);
@@ -213,26 +213,30 @@ void CUIEngine::OnMouseMove(f32 x, f32 y) {
 }
 
 void CUIEngine::OnMouseDown(f32 x, f32 y, i32 button) {
+    LOG_INFO("CUIEngine::OnMouseDown pos=({:.0f},{:.0f}) button={}", x, y, button);
+    spdlog::default_logger()->flush();
+    
     m_mouseX = x;
     m_mouseY = y;
     
     if (m_root) {
         m_root->OnMouseDown(x, y, button);
     }
-    
-    // Update focus
-    auto* clicked = FindPanelAtPoint(m_root.get(), x, y);
-    if (clicked != m_focusedPanel) {
-        SetFocus(clicked);
-    }
 }
 
 void CUIEngine::OnMouseUp(f32 x, f32 y, i32 button) {
+    LOG_INFO("CUIEngine::OnMouseUp START pos=({:.0f},{:.0f}) button={}", x, y, button);
+    spdlog::default_logger()->flush();
+    
     m_mouseX = x;
     m_mouseY = y;
     
     if (m_root) {
+        LOG_INFO("CUIEngine::OnMouseUp calling root->OnMouseUp");
+        spdlog::default_logger()->flush();
         m_root->OnMouseUp(x, y, button);
+        LOG_INFO("CUIEngine::OnMouseUp root->OnMouseUp returned");
+        spdlog::default_logger()->flush();
     }
 }
 

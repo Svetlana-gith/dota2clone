@@ -657,7 +657,7 @@ bool DirectXRenderer::CreateDevice() {
 
     // FORCE WARP: Use software renderer for testing on problematic GPUs (Intel HD 4600)
     // Set to true to bypass hardware GPU and use CPU rendering
-    const bool forceWarp = true;
+    const bool forceWarp = false;
     
     if (forceWarp) {
         ComPtr<IDXGIAdapter> warpAdapter;

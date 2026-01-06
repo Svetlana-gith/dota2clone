@@ -33,6 +33,7 @@ MainMenuState::~MainMenuState() = default;
 
 void MainMenuState::OnEnter() { 
     LOG_INFO("MainMenuState::OnEnter()");
+    m_matchReadyHandled = false;  // Reset for new matchmaking session
     Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/main_menu.css");
     CreateUI(); 
     LOG_INFO("MainMenuState UI created");
@@ -92,23 +93,32 @@ void MainMenuState::CreateUI() {
         }
     }
 
-    // Bottom Bar
-    m_ui->bottomBar = std::make_unique<MainMenuBottomBar>();
-    m_ui->bottomBar->Create(m_ui->root.get(), sw, sh, contentWidth, contentOffsetX);
-
     // Content Area
     m_ui->content = std::make_unique<MainMenuContent>();
     m_ui->content->Create(m_ui->root.get(), contentWidth, contentHeight, contentOffsetX, contentOffsetY);
+    
+    // Set username in profile from auth
+    if (m_manager) {
+        if (auto* auth = m_manager->GetAuthClient()) {
+            if (auth->IsAuthenticated()) {
+                m_ui->content->SetUsername(auth->GetUsername());
+            }
+        }
+    }
 
-    // Matchmaking Panel (includes play button, finding UI, accept overlay)
+    // Bottom Bar (created after Content so it's on top for z-order)
+    m_ui->bottomBar = std::make_unique<MainMenuBottomBar>();
+    m_ui->bottomBar->Create(m_ui->root.get(), sw, sh, contentWidth, contentOffsetX);
+    m_ui->bottomBar->SetOnPlayClicked([this]() { OnPlayClicked(); });
+
+    // Matchmaking Panel (finding UI, accept overlay - Play button is in BottomBar)
     m_ui->matchmakingPanel = std::make_unique<MatchmakingPanel>();
     m_ui->matchmakingPanel->Create(m_ui->root.get(), m_ui->bottomBar->GetBottomBar().get(),
                                     sw, sh, contentWidth, contentWidth - 200);
-    m_ui->matchmakingPanel->SetOnPlayClicked([this]() { OnPlayClicked(); });
     m_ui->matchmakingPanel->SetOnCancelClicked([this]() {
         if (m_mmClient) m_mmClient->cancelQueue();
         m_ui->matchmakingPanel->HideFindingUI();
-        m_ui->matchmakingPanel->ShowPlayButton();
+        m_ui->bottomBar->SetPlayButtonVisible(true);
         ConsoleLog("Matchmaking cancelled");
     });
     m_ui->matchmakingPanel->SetOnAcceptClicked([this]() {
@@ -238,7 +248,7 @@ void MainMenuState::OnPlayClicked() {
     prefs.region = "auto";
 
     if (m_mmClient->queueForMatch(prefs)) {
-        m_ui->matchmakingPanel->HidePlayButton();
+        m_ui->bottomBar->SetPlayButtonVisible(false);
         m_ui->matchmakingPanel->ShowFindingUI();
     } else {
         ConsoleLog("Failed to queue for match");
@@ -306,6 +316,13 @@ void MainMenuState::SetupMatchmakingCallbacks() {
     });
     
     m_mmClient->setOnMatchReady([this](const std::string& serverIP, u16 port) {
+        // Prevent duplicate handling of MatchReady
+        if (m_matchReadyHandled) {
+            LOG_WARN("MatchReady already handled, ignoring duplicate");
+            return;
+        }
+        m_matchReadyHandled = true;
+        
         ConsoleLog("Match ready! Connecting...");
         m_ui->matchmakingPanel->HideAcceptOverlay();
         m_ui->matchmakingPanel->HideFindingUI();
@@ -327,23 +344,23 @@ void MainMenuState::SetupMatchmakingCallbacks() {
         
         if (shouldRequeue) {
             m_ui->matchmakingPanel->ShowFindingUI();
-            m_ui->matchmakingPanel->HidePlayButton();
+            m_ui->bottomBar->SetPlayButtonVisible(false);
         } else {
             m_ui->matchmakingPanel->HideFindingUI();
-            m_ui->matchmakingPanel->ShowPlayButton();
+            m_ui->bottomBar->SetPlayButtonVisible(true);
         }
     });
     
     m_mmClient->setOnError([this](const std::string& error) {
         ConsoleLog(std::string("MM error: ") + error);
         m_ui->matchmakingPanel->HideFindingUI();
-        m_ui->matchmakingPanel->ShowPlayButton();
+        m_ui->bottomBar->SetPlayButtonVisible(true);
     });
     
     m_mmClient->setOnQueueRejected([this](const std::string& reason, bool authFailed, bool isBanned) {
         ConsoleLog(std::string("Queue rejected: ") + reason);
         m_ui->matchmakingPanel->HideFindingUI();
-        m_ui->matchmakingPanel->ShowPlayButton();
+        m_ui->bottomBar->SetPlayButtonVisible(true);
     });
 }
 

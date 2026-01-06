@@ -127,43 +127,34 @@ const std::string& CButton::GetText() const { static std::string e; return m_lab
 void CButton::SetOnActivate(std::function<void()> handler) { m_onActivate = handler; }
 
 bool CButton::OnMouseUp(f32 x, f32 y, i32 button) {
+    // Flush logs immediately for debugging crashes
+    LOG_INFO("CButton::OnMouseUp START id='{}'", m_id);
+    spdlog::default_logger()->flush();
+    
     bool wasPressed = m_pressed;
+    bool inPanel = IsPointInPanel(x, y);
     bool result = CPanel2D::OnMouseUp(x, y, button);
-    if (wasPressed && IsPointInPanel(x, y) && button == 0 && m_onActivate) m_onActivate();
+    
+    LOG_INFO("CButton::OnMouseUp id='{}' wasPressed={} inPanel={} hasCallback={}", 
+             m_id, wasPressed, inPanel, m_onActivate ? true : false);
+    spdlog::default_logger()->flush();
+    
+    // Call callback and return immediately - callback may destroy this object
+    if (wasPressed && inPanel && button == 0 && m_onActivate) {
+        LOG_INFO("CButton::OnMouseUp CALLING CALLBACK for '{}'", m_id);
+        spdlog::default_logger()->flush();
+        auto callback = m_onActivate; // Copy callback before calling
+        callback();
+        return true; // Return immediately, don't access 'this' anymore
+    }
     return result;
 }
 
 void CButton::Render(CUIRenderer* renderer) {
-    if (!m_visible) return;
+    if (!m_visible || !renderer) return;
     
-    // Save original background color
-    auto originalBg = m_computedStyle.backgroundColor;
-    
-    // Get base color (prefer computed, fallback to inline)
-    Color baseColor = m_computedStyle.backgroundColor.value_or(
-        m_inlineStyle.backgroundColor.value_or(Color(0.25f, 0.25f, 0.3f, 0.9f))
-    );
-    
-    // Apply hover/pressed effects
-    if (m_pressed) {
-        // Darken when pressed (30% darker)
-        baseColor.r *= 0.7f;
-        baseColor.g *= 0.7f;
-        baseColor.b *= 0.7f;
-        m_computedStyle.backgroundColor = baseColor;
-    } else if (m_hovered) {
-        // Brighten when hovered (20% brighter)
-        baseColor.r = std::min(1.0f, baseColor.r * 1.2f);
-        baseColor.g = std::min(1.0f, baseColor.g * 1.2f);
-        baseColor.b = std::min(1.0f, baseColor.b * 1.2f);
-        m_computedStyle.backgroundColor = baseColor;
-    }
-    
-    // Render with modified color
+    // Just call parent render - no color modification for now (debugging crash)
     CPanel2D::Render(renderer);
-    
-    // Restore original color
-    m_computedStyle.backgroundColor = originalBg;
 }
 
 bool CButton::OnKeyDown(i32 key) {

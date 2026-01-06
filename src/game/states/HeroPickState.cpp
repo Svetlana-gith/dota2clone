@@ -139,10 +139,15 @@ void HeroPickState::SetupNetworkCallbacks() {
     
     // Hero pick broadcast from other players
     client->setOnHeroPick([this](u64 playerId, const std::string& heroName, u8 teamSlot, bool confirmed) {
-        LOG_INFO("Received hero pick: player {} -> {} (slot {})", playerId, heroName, teamSlot);
-        m_playerPicks[playerId] = {heroName, teamSlot, confirmed};
-        UpdatePlayerSlot(teamSlot, heroName, confirmed);
-        ConsoleLog("Player " + std::to_string(playerId) + " picked " + heroName);
+        LOG_INFO("Received hero pick: player {} -> {} (slot {}) - CALLBACK DISABLED FOR DEBUG", playerId, heroName, teamSlot);
+        // Temporarily disabled to debug crash
+        // m_playerPicks[playerId] = {heroName, teamSlot, confirmed};
+        // if (teamSlot != m_myTeamSlot) {
+        //     if (m_manager && m_manager->GetCurrentStateType() == EGameState::HeroPick && m_ui && m_ui->root) {
+        //         UpdatePlayerSlot(teamSlot, heroName, confirmed);
+        //     }
+        //     ConsoleLog("Player " + std::to_string(playerId) + " picked " + heroName);
+        // }
     });
     
     // All players picked - start game countdown
@@ -151,13 +156,16 @@ void HeroPickState::SetupNetworkCallbacks() {
         m_allPicked = true;
         m_gameStartDelay = startDelay;
         
-        if (m_ui->phaseLabel) {
-            m_ui->phaseLabel->SetText("ALL PICKED! STARTING GAME...");
-        }
-        if (m_ui->timerLabel) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%.1f", startDelay);
-            m_ui->timerLabel->SetText(buf);
+        // Safety: only update UI if we're still in HeroPick state
+        if (m_manager && m_manager->GetCurrentStateType() == EGameState::HeroPick && m_ui && m_ui->root) {
+            if (m_ui->phaseLabel) {
+                m_ui->phaseLabel->SetText("ALL PICKED! STARTING GAME...");
+            }
+            if (m_ui->timerLabel) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.1f", startDelay);
+                m_ui->timerLabel->SetText(buf);
+            }
         }
         ConsoleLog("All heroes picked! Game starting in " + std::to_string((int)startDelay) + " seconds");
     });
@@ -170,12 +178,18 @@ void HeroPickState::SetupNetworkCallbacks() {
 }
 
 void HeroPickState::UpdatePlayerSlot(u8 teamSlot, const std::string& playerName, bool confirmed) {
+    // Safety check - UI may not be initialized or may be destroyed
+    if (!m_ui || !m_ui->root) {
+        LOG_WARN("UpdatePlayerSlot called but UI is not valid");
+        return;
+    }
+    
     Panorama::Color pickedColor(0.2f, 0.5f, 0.3f, 1.0f);
     Panorama::Color selectedColor(0.3f, 0.4f, 0.5f, 0.9f);
     Panorama::Color emptyColor(0.1f, 0.1f, 0.12f, 0.8f);
     
     if (teamSlot < 5) {
-        if (teamSlot < m_ui->radiantSlots.size()) {
+        if (teamSlot < m_ui->radiantSlots.size() && m_ui->radiantSlots[teamSlot]) {
             auto& slot = m_ui->radiantSlots[teamSlot];
             slot->GetStyle().backgroundColor = confirmed ? pickedColor : (playerName.empty() ? emptyColor : selectedColor);
             if (teamSlot < m_ui->radiantLabels.size() && m_ui->radiantLabels[teamSlot]) {
@@ -185,7 +199,7 @@ void HeroPickState::UpdatePlayerSlot(u8 teamSlot, const std::string& playerName,
         }
     } else {
         u8 direSlot = teamSlot - 5;
-        if (direSlot < m_ui->direSlots.size()) {
+        if (direSlot < m_ui->direSlots.size() && m_ui->direSlots[direSlot]) {
             auto& slot = m_ui->direSlots[direSlot];
             slot->GetStyle().backgroundColor = confirmed ? pickedColor : (playerName.empty() ? emptyColor : selectedColor);
             if (direSlot < m_ui->direLabels.size() && m_ui->direLabels[direSlot]) {
@@ -391,7 +405,14 @@ void HeroPickState::CreateUI() {
         clickBtn->GetStyle().width = Panorama::Length::Px(S(cardW));
         clickBtn->GetStyle().height = Panorama::Length::Px(S(cardH));
         clickBtn->GetStyle().backgroundColor = Panorama::Color(0, 0, 0, 0);
-        clickBtn->SetOnActivate([this, heroName]() { OnHeroClicked(heroName); });
+        // Position button at (0,0) relative to card to cover entire card
+        clickBtn->GetStyle().marginLeft = Panorama::Length::Px(0);
+        clickBtn->GetStyle().marginTop = Panorama::Length::Px(0);
+        
+        // Simple callback - just log and call OnHeroClicked
+        clickBtn->SetOnActivate([this, heroName]() { 
+            OnHeroClicked(heroName); 
+        });
         card->AddChild(clickBtn);
     }
     
@@ -451,6 +472,18 @@ void HeroPickState::DestroyUI() {
 
 
 void HeroPickState::Update(f32 deltaTime) {
+    // Debug: log every N frames to see if Update is running
+    static int updateCount = 0;
+    if (++updateCount % 60 == 0) {
+        LOG_INFO("HeroPickState::Update frame {}", updateCount);
+        spdlog::default_logger()->flush();
+    }
+    
+    // Safety check - ensure we're still in HeroPick state
+    if (!m_manager || m_manager->GetCurrentStateType() != EGameState::HeroPick) {
+        return;
+    }
+    
     Panorama::CUIEngine::Instance().Update(deltaTime);
     
     // Update shared network client
@@ -458,11 +491,16 @@ void HeroPickState::Update(f32 deltaTime) {
         client->update(deltaTime);
     }
     
+    // Safety check again after network update (callbacks may change state)
+    if (!m_manager || m_manager->GetCurrentStateType() != EGameState::HeroPick) {
+        return;
+    }
+    
     // Handle game start countdown after all picked
     if (m_allPicked) {
         m_gameStartDelay -= deltaTime;
         
-        if (m_ui->timerLabel) {
+        if (m_ui && m_ui->timerLabel) {
             char buf[32];
             snprintf(buf, sizeof(buf), "%.1f", std::max(0.0f, m_gameStartDelay));
             m_ui->timerLabel->SetText(buf);
@@ -498,17 +536,17 @@ void HeroPickState::TransitionToGame() {
 }
 
 void HeroPickState::UpdateTimer() {
-    if (m_ui->timerLabel) {
-        int seconds = static_cast<int>(std::max(0.0f, m_pickTimer));
-        int mins = seconds / 60;
-        int secs = seconds % 60;
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%d:%02d", mins, secs);
-        m_ui->timerLabel->SetText(buf);
-        
-        if (m_pickTimer < 10.0f) {
-            m_ui->timerLabel->GetStyle().color = Panorama::Color(0.95f, 0.25f, 0.25f, 1.0f);
-        }
+    if (!m_ui || !m_ui->timerLabel) return;
+    
+    int seconds = static_cast<int>(std::max(0.0f, m_pickTimer));
+    int mins = seconds / 60;
+    int secs = seconds % 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d:%02d", mins, secs);
+    m_ui->timerLabel->SetText(buf);
+    
+    if (m_pickTimer < 10.0f) {
+        m_ui->timerLabel->GetStyle().color = Panorama::Color(0.95f, 0.25f, 0.25f, 1.0f);
     }
 }
 
@@ -517,6 +555,16 @@ void HeroPickState::Render() {
 }
 
 void HeroPickState::OnHeroClicked(const std::string& heroId) {
+    // Flush logs immediately to capture crash location
+    LOG_INFO("OnHeroClicked START heroId='{}'", heroId);
+    spdlog::default_logger()->flush();
+    
+    if (!m_ui) {
+        LOG_ERROR("OnHeroClicked: m_ui is nullptr!");
+        spdlog::default_logger()->flush();
+        return;
+    }
+    
     if (m_hasPicked) return;
     
     m_selectedHero = heroId;
@@ -560,7 +608,7 @@ void HeroPickState::OnConfirmPick() {
         m_ui->randomButton->SetVisible(false);
     }
     
-    UpdatePlayerSlot(m_myTeamSlot, m_confirmedHero, true);
+    UpdatePlayerSlot(m_myTeamSlot, m_confirmedHero + " (You)", true);
     
     // In single player / local mode, transition immediately
     if (auto* client = GetNetworkClient()) {
@@ -613,12 +661,18 @@ bool HeroPickState::OnMouseMove(f32 x, f32 y) {
 }
 
 bool HeroPickState::OnMouseDown(f32 x, f32 y, i32 b) {
-    Panorama::CUIEngine::Instance().OnMouseDown(x, y, b);
+    LOG_INFO("HeroPickState::OnMouseDown DISABLED for debug pos=({:.0f},{:.0f})", x, y);
+    spdlog::default_logger()->flush();
+    // TEMPORARY: Skip UI mouse handling to isolate crash
+    // Panorama::CUIEngine::Instance().OnMouseDown(x, y, b);
     return true;
 }
 
 bool HeroPickState::OnMouseUp(f32 x, f32 y, i32 b) {
-    Panorama::CUIEngine::Instance().OnMouseUp(x, y, b);
+    LOG_INFO("HeroPickState::OnMouseUp DISABLED for debug pos=({:.0f},{:.0f})", x, y);
+    spdlog::default_logger()->flush();
+    // TEMPORARY: Skip UI mouse handling to isolate crash
+    // Panorama::CUIEngine::Instance().OnMouseUp(x, y, b);
     return true;
 }
 
