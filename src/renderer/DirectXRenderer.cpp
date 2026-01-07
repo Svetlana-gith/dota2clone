@@ -316,9 +316,10 @@ void DirectXRenderer::DeferredReleaseResource(ComPtr<ID3D12Resource> resource) {
     }
 
     // Добавляем ресурс в список отложенного удаления
+    // Используем m_fenceValue + kFrameCount чтобы гарантировать что все in-flight кадры завершились
     DeferredResource deferred;
     deferred.resource = resource;
-    deferred.frameValue = m_fenceValue; // Текущее значение fence
+    deferred.frameValue = m_fenceValue + kFrameCount; // Ждём завершения всех in-flight кадров
     m_deferredReleases.push_back(deferred);
 }
 
@@ -333,19 +334,6 @@ void DirectXRenderer::BeginFrame() {
     // Ждем завершения работы GPU для этого frame index
     // Это гарантирует, что command allocator не используется GPU
     WaitForFrame(m_frameIndex);
-    
-    // Дополнительная проверка: если это первые кадры, подождем немного больше
-    if (m_fenceValues[m_frameIndex] == 0) {
-        // Для первых кадров ждем завершения всех предыдущих команд
-        const uint64_t currentCompleted = m_fence->GetCompletedValue();
-        if (currentCompleted < m_fenceValue - 1) {
-            // Есть незавершенные команды, ждем их
-            HRESULT hr = m_fence->SetEventOnCompletion(m_fenceValue - 1, m_fenceEvent);
-            if (SUCCEEDED(hr)) {
-                WaitForSingleObject(m_fenceEvent, 1000); // Максимум 1 секунда
-            }
-        }
-    }
     
     // Теперь безопасно сбрасываем command allocator
     HRESULT hr = m_commandAllocators[m_frameIndex]->Reset();
@@ -387,9 +375,10 @@ void DirectXRenderer::BeginSwapchainPass(float clearColor[4]) {
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     m_commandList->ResourceBarrier(1, &barrier);
 
-    // Bind RT
+    // Bind RT + Depth (many world PSOs expect a DSV; without it, command list Close() can fail on some drivers)
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = GetCurrentRenderTargetView();
-    m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+    EnsureViewportDepthStencil(m_width, m_height);
+    m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &m_viewportDsvHandle);
 
     // Viewport/scissor to window size
     D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height), 0.0f, 1.0f };
@@ -398,6 +387,10 @@ void DirectXRenderer::BeginSwapchainPass(float clearColor[4]) {
     m_commandList->RSSetScissorRects(1, &scissorRect);
 
     m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    // Clear depth for world rendering
+    if (m_viewportDS) {
+        m_commandList->ClearDepthStencilView(m_viewportDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    }
 }
 
 void DirectXRenderer::EnsureViewportRenderTarget(uint32_t width, uint32_t height) {
@@ -480,6 +473,11 @@ void DirectXRenderer::EnsureViewportDepthStencil(uint32_t width, uint32_t height
 
     // DSV heap has a single descriptor.
     m_viewportDsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
+
+    // Track the depth size too. This keeps EnsureViewportDepthStencil() usable independently
+    // of EnsureViewportRenderTarget() (e.g. swapchain pass wants depth but doesn't need an offscreen RT).
+    m_viewportRTWidth = width;
+    m_viewportRTHeight = height;
 
     D3D12_RESOURCE_DESC dsDesc = {};
     dsDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -574,8 +572,14 @@ void DirectXRenderer::EndFrame() {
 
     m_commandList->ResourceBarrier(1, &barrier);
 
-    // Закрываем command list
-    DX_CHECK(m_commandList->Close());
+    // Close command list. If this fails with E_FAIL, DX12 debug layer usually has a specific message queued.
+    HRESULT hr = m_commandList->Close();
+#ifdef DX12_ENABLE_DEBUG_LAYER
+    if (FAILED(hr)) {
+        CheckDebugMessages();
+    }
+#endif
+    DX_CHECK(hr);
 }
 
 bool DirectXRenderer::Present() {
@@ -590,8 +594,8 @@ bool DirectXRenderer::Present() {
     ID3D12CommandList* ppCommandLists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
-    // Present с VSync (1 = включен)
-    HRESULT hr = m_swapChain->Present(1, 0);
+    // Present без VSync (0 = отключен) для максимального FPS
+    HRESULT hr = m_swapChain->Present(0, 0);
     if (FAILED(hr)) {
         // Log the error but don't throw exception for present failures
         // These are often non-fatal (device removed, window closed, etc.)
@@ -628,27 +632,24 @@ bool DirectXRenderer::Present() {
 
 bool DirectXRenderer::CreateDevice() {
 #ifdef DX12_ENABLE_DEBUG_LAYER
-    // Включаем debug layer только в специальных debug builds
-    // Для обычной разработки отключаем - слишком агрессивный
-    /*
-    ComPtr<ID3D12Debug> debugController;
-    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
-        debugController->EnableDebugLayer();
-        std::cout << "DX12 Debug Layer enabled" << std::endl;
-        
-        // Включаем GPU-based validation (опционально, только в Debug)
-        ComPtr<ID3D12Debug1> debugController1;
-        if (SUCCEEDED(debugController.As(&debugController1))) {
-#ifdef _DEBUG
-            // GPU validation очень медленная и строгая - только для глубокой отладки
-            // debugController1->SetEnableGPUBasedValidation(TRUE);
-            // std::cout << "GPU-based validation enabled" << std::endl;
-            std::cout << "GPU-based validation disabled (too strict for development)" << std::endl;
-#endif
+    // Enable DX12 debug layer in Debug builds to capture the real reason why
+    // ID3D12GraphicsCommandList::Close() returns E_FAIL (otherwise we only see E_FAIL).
+    // Keep it non-fatal: do not break on warnings/errors (except corruption).
+    {
+        ComPtr<ID3D12Debug> debugController;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
+            debugController->EnableDebugLayer();
+            spdlog::info("DX12 Debug Layer enabled (Debug build)");
+
+            // Keep GPU-based validation off by default; it is extremely slow and noisy.
+            ComPtr<ID3D12Debug1> debugController1;
+            if (SUCCEEDED(debugController.As(&debugController1))) {
+                debugController1->SetEnableGPUBasedValidation(FALSE);
+            }
+        } else {
+            spdlog::warn("DX12 Debug Layer not available (D3D12GetDebugInterface failed)");
         }
     }
-    */
-    std::cout << "DX12 Debug Layer disabled for stability" << std::endl;
 #endif
 
     // Создаем DXGI factory
@@ -730,34 +731,27 @@ bool DirectXRenderer::CreateDevice() {
     DX_CHECK(D3D12CreateDevice(bestAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device)));
 
 #ifdef DX12_ENABLE_DEBUG_LAYER
-    // Настраиваем Info Queue для умной обработки ошибок
-    // ОТКЛЮЧЕНО: слишком агрессивно для разработки
-    /*
-    ComPtr<ID3D12InfoQueue> infoQueue;
-    if (SUCCEEDED(m_device.As(&infoQueue))) {
-        std::cout << "Setting up DX12 Info Queue..." << std::endl;
-        
-        // НЕ прерываем выполнение при ошибках - только логируем
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);  // Только критические
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);      // Ошибки - логируем
-        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);    // Предупреждения - логируем
-        
-        // Фильтруем известные "ложные" ошибки
-        D3D12_MESSAGE_ID denyIds[] = {
-            D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
-            D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
-            // Добавим другие известные ложные срабатывания по мере необходимости
-        };
-        
-        D3D12_INFO_QUEUE_FILTER filter = {};
-        filter.DenyList.NumIDs = _countof(denyIds);
-        filter.DenyList.pIDList = denyIds;
-        infoQueue->AddStorageFilterEntries(&filter);
-        
-        std::cout << "DX12 Info Queue configured (non-breaking mode)" << std::endl;
+    // Configure the DX12 InfoQueue so we can dump messages into the game's log.
+    // Do not break on warnings/errors; only break on corruption.
+    {
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        if (SUCCEEDED(m_device.As(&infoQueue))) {
+            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
+            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
+
+            // Filter known noisy messages.
+            D3D12_MESSAGE_ID denyIds[] = {
+                D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+                D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
+            };
+            D3D12_INFO_QUEUE_FILTER filter = {};
+            filter.DenyList.NumIDs = _countof(denyIds);
+            filter.DenyList.pIDList = denyIds;
+            infoQueue->AddStorageFilterEntries(&filter);
+            spdlog::info("DX12 InfoQueue enabled (non-breaking)");
+        }
     }
-    */
-    std::cout << "DX12 Info Queue disabled for stability" << std::endl;
 #endif
 
     return true;
@@ -889,6 +883,32 @@ void DirectXRenderer::WaitForPreviousFrame() {
     }
     if (m_swapChain) {
         m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
+    }
+}
+
+void DirectXRenderer::WaitForGpuIdle() {
+    // Unlike WaitForPreviousFrame(), this does not depend on per-frame fence values being set.
+    // It guarantees that everything previously queued on the direct command queue has completed.
+    if (!m_commandQueue || !m_fence || !m_fenceEvent) {
+        return;
+    }
+
+    const uint64_t value = ++m_fenceValue;
+    const HRESULT hr = m_commandQueue->Signal(m_fence.Get(), value);
+    if (FAILED(hr)) {
+        return;
+    }
+
+    if (m_fence->GetCompletedValue() < value) {
+        if (SUCCEEDED(m_fence->SetEventOnCompletion(value, m_fenceEvent))) {
+            WaitForSingleObject(m_fenceEvent, INFINITE);
+        }
+    }
+
+    // Mark all frame slots as completed at least at this point, so later WaitForFrame() calls
+    // won't treat frames as "never submitted".
+    for (uint32_t i = 0; i < kFrameCount; ++i) {
+        m_fenceValues[i] = value;
     }
 }
 
@@ -1119,7 +1139,7 @@ bool DirectXRenderer::CreateVertexBuffer() {
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
     DX_CHECK(m_device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
-                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                             D3D12_RESOURCE_STATE_COMMON, nullptr,
                                              IID_PPV_ARGS(&m_vertexBuffer)));
 
     // Создаем upload buffer для копирования данных
@@ -1188,7 +1208,7 @@ bool DirectXRenderer::CreateIndexBuffer() {
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
     DX_CHECK(m_device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
-                                             D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                             D3D12_RESOURCE_STATE_COMMON, nullptr,
                                              IID_PPV_ARGS(&m_indexBuffer)));
 
     // Создаем upload buffer для копирования данных
@@ -1262,8 +1282,15 @@ void DirectXRenderer::CheckDebugMessages() {
     ComPtr<ID3D12InfoQueue> infoQueue;
     if (SUCCEEDED(m_device.As(&infoQueue))) {
         UINT64 messageCount = infoQueue->GetNumStoredMessages();
-        
-        for (UINT64 i = 0; i < messageCount; ++i) {
+        if (messageCount == 0) {
+            return;
+        }
+
+        // Cap per-call logging to keep logs readable.
+        const UINT64 maxToLog = 64;
+        const UINT64 toLog = (messageCount > maxToLog) ? maxToLog : messageCount;
+
+        for (UINT64 i = 0; i < toLog; ++i) {
             SIZE_T messageLength = 0;
             infoQueue->GetMessage(i, nullptr, &messageLength);
             
@@ -1280,12 +1307,23 @@ void DirectXRenderer::CheckDebugMessages() {
                         case D3D12_MESSAGE_SEVERITY_INFO: severityStr = "INFO"; break;
                         case D3D12_MESSAGE_SEVERITY_MESSAGE: severityStr = "MESSAGE"; break;
                     }
-                    
-                    std::cout << "[DX12 " << severityStr << "] " << message->pDescription << std::endl;
+
+                    // Prefer spdlog so messages land in logs/game_*.log
+                    // Only surface WARNING+ by default (INFO/MESSAGE can be very noisy).
+                    if (message->Severity == D3D12_MESSAGE_SEVERITY_ERROR ||
+                        message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION) {
+                        spdlog::error("[DX12 {}] {}", severityStr, message->pDescription);
+                    } else if (message->Severity == D3D12_MESSAGE_SEVERITY_WARNING) {
+                        spdlog::warn("[DX12 {}] {}", severityStr, message->pDescription);
+                    }
                 }
             }
         }
-        
+
+        if (messageCount > maxToLog) {
+            spdlog::warn("[DX12] {} messages pending; logged first {}", (unsigned long long)messageCount, (unsigned long long)maxToLog);
+        }
+
         // Очищаем сообщения после вывода
         infoQueue->ClearStoredMessages();
     }

@@ -715,7 +715,7 @@ bool RenderSystem::createVertexBuffer(MeshComponent& mesh, ID3D12GraphicsCommand
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
     HRESULT hr = device_->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
-                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                D3D12_RESOURCE_STATE_COMMON, nullptr,
                                                 IID_PPV_ARGS(&mesh.vertexBuffer));
     if (FAILED(hr)) {
         LOG_ERROR("Failed to create vertex buffer: HRESULT 0x{:X}", static_cast<unsigned>(hr));
@@ -816,7 +816,7 @@ bool RenderSystem::createIndexBuffer(MeshComponent& mesh, ID3D12GraphicsCommandL
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
     HRESULT hr = device_->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resourceDesc,
-                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                D3D12_RESOURCE_STATE_COMMON, nullptr,
                                                 IID_PPV_ARGS(&mesh.indexBuffer));
     if (FAILED(hr)) {
         LOG_ERROR("Failed to create index buffer: HRESULT 0x{:X}", static_cast<unsigned>(hr));
