@@ -1,7 +1,9 @@
 #pragma once
 
-#include "ui/panorama/CUIEngine.h"
-#include "ui/panorama/CPanel2D.h"
+#include "ui/panorama/core/CUIEngine.h"
+#include "ui/panorama/core/CPanel2D.h"
+#include "ui/panorama/widgets/CLabel.h"
+#include "ui/panorama/widgets/CButton.h"
 #include <deque>
 #include <string>
 #include <memory>

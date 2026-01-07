@@ -63,6 +63,10 @@ public:
         auto it = clients_.find(clientId);
         return (it != clients_.end()) ? it->second.accountId : 0;
     }
+    u8 getClientTeamSlot(ClientId clientId) const {
+        auto it = clients_.find(clientId);
+        return (it != clients_.end()) ? it->second.teamSlot : 0;
+    }
     
     // Packet sending
     void sendSnapshotToClient(ClientId clientId, const WorldSnapshot& snapshot);

@@ -562,6 +562,10 @@ void EditorUI::draw(World& world) {
 }
 
 void EditorUI::performNew(World& world) {
+    // Wait for GPU to finish before destroying mesh resources
+    if (renderer_) {
+        renderer_->WaitForGpuIdle();
+    }
     world.clearEntities();
     selected_ = INVALID_ENTITY;
     undo_.clear();
@@ -572,6 +576,10 @@ void EditorUI::performNew(World& world) {
 }
 
 void EditorUI::performOpen(World& world) {
+    // Wait for GPU to finish before MapIO::load clears entities
+    if (renderer_) {
+        renderer_->WaitForGpuIdle();
+    }
     String err;
     if (!WorldEditor::MapIO::load(world, currentMapPath_, &err)) {
         LOG_ERROR("Map load failed: {}", err);
@@ -2118,6 +2126,13 @@ void EditorUI::drawMaterial(World& world, Entity e) {
 }
 
 void EditorUI::createTestMap(World& world) {
+    // Wait for GPU to finish all in-flight work before destroying mesh resources.
+    // This prevents DeviceRemoved errors when MeshComponent destructors release GPU buffers
+    // that are still referenced by command lists.
+    if (renderer_) {
+        renderer_->WaitForGpuIdle();
+    }
+    
     // Clear existing entities
     world.clearEntities();
     selected_ = INVALID_ENTITY;

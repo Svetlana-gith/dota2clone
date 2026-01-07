@@ -662,12 +662,12 @@ Entity HeroSystem::createHero(const String& heroName, i32 teamId, const Vec3& po
     auto& heroComp = entityManager_.addComponent<HeroComponent>(hero, heroName, teamId);
     auto& transform = entityManager_.addComponent<TransformComponent>(hero);
     transform.position = position;
-    transform.scale = Vec3(5.0f, 2.0f, 5.0f); // Large hero scale
+    transform.scale = Vec3(1.0f); // Scale handled by mesh size
     
     // Set respawn position
     heroComp.respawnPosition = position;
     heroComp.isPlayerControlled = (teamId == 1); // Team 1 hero is player controlled
-    heroComp.moveSpeed = 350.0f; // Fast movement speed (7-8 units per frame at 60fps)
+    heroComp.moveSpeed = 350.0f; // Movement speed in units/sec
     
     // Initialize stats
     recalculateStats(heroComp);
@@ -680,7 +680,7 @@ Entity HeroSystem::createHero(const String& heroName, i32 teamId, const Vec3& po
     heroComp.abilities[0].data.manaCost = 100.0f;
     heroComp.abilities[0].data.cooldown = 10.0f;
     heroComp.abilities[0].data.damage = 150.0f;
-    heroComp.abilities[0].data.castRange = 15.0f;  // Range for targeting
+    heroComp.abilities[0].data.castRange = 600.0f;  // Range for targeting (Dota scale)
     heroComp.abilities[0].data.targetType = AbilityTargetType::UnitTarget;
     heroComp.abilities[0].level = 1;  // Start with ability learned
     
@@ -689,8 +689,8 @@ Entity HeroSystem::createHero(const String& heroName, i32 teamId, const Vec3& po
     heroComp.abilities[1].data.manaCost = 80.0f;
     heroComp.abilities[1].data.cooldown = 12.0f;
     heroComp.abilities[1].data.damage = 100.0f;
-    heroComp.abilities[1].data.radius = 8.0f;      // AoE radius
-    heroComp.abilities[1].data.castRange = 20.0f;  // Range for targeting
+    heroComp.abilities[1].data.radius = 300.0f;    // AoE radius (Dota scale)
+    heroComp.abilities[1].data.castRange = 700.0f; // Range for targeting
     heroComp.abilities[1].data.targetType = AbilityTargetType::PointTarget;
     heroComp.abilities[1].level = 1;  // Start with ability learned
     
@@ -704,21 +704,19 @@ Entity HeroSystem::createHero(const String& heroName, i32 teamId, const Vec3& po
     heroComp.abilities[3].data.manaCost = 200.0f;
     heroComp.abilities[3].data.cooldown = 60.0f;
     heroComp.abilities[3].data.damage = 500.0f;
-    heroComp.abilities[3].data.castRange = 25.0f;  // Range for targeting
+    heroComp.abilities[3].data.castRange = 800.0f; // Range for targeting
     heroComp.abilities[3].data.targetType = AbilityTargetType::UnitTarget;
     heroComp.abilities[3].level = 1;  // Start with ability learned
     
-    // Create hero mesh (humanoid shape)
+    // Create hero mesh (humanoid shape) - sized for 16000x16000 map
+    // Hero: ~50 units radius, ~120 units height (visible but not huge)
     auto& mesh = entityManager_.addComponent<MeshComponent>(hero, "HeroMesh");
-    
-    // Create a simple humanoid mesh (body + head)
-    // Body (cylinder)
-    MeshGenerators::GenerateCylinder(mesh, 0.5f, 2.0f, 16);
+    MeshGenerators::GenerateCylinder(mesh, 50.0f, 120.0f, 16);
     
     // Add collision
     auto& collision = entityManager_.addComponent<CollisionComponent>(hero, CollisionShape::Capsule);
-    collision.capsuleRadius = 0.5f;
-    collision.capsuleHeight = 2.0f;
+    collision.capsuleRadius = 50.0f;
+    collision.capsuleHeight = 120.0f;
     collision.blocksMovement = true;
     
     // Create material with team color
@@ -1784,17 +1782,51 @@ Entity HeroSystem::createHeroByType(const String& heroType, i32 teamId, const Ve
     
     auto& heroComp = entityManager_.getComponent<HeroComponent>(hero);
     
-    if (heroType == "Warrior") {
-        setupHero_Warrior(heroComp);
-    } else if (heroType == "Mage") {
-        setupHero_Mage(heroComp);
-    } else if (heroType == "Assassin") {
-        setupHero_Assassin(heroComp);
+    // Map Dota 2 hero names to base types
+    // Strength heroes -> Warrior
+    // Agility heroes -> Assassin  
+    // Intelligence heroes -> Mage
+    String baseType = heroType;
+    
+    // Strength heroes (Warrior type)
+    if (heroType == "Axe" || heroType == "Sven" || heroType == "Pudge" || 
+        heroType == "Tidehunter" || heroType == "Earthshaker" || heroType == "Tiny" ||
+        heroType == "Warrior") {
+        baseType = "Warrior";
     }
+    // Agility heroes (Assassin type)
+    else if (heroType == "Juggernaut" || heroType == "Anti-Mage" || heroType == "Phantom Assassin" ||
+             heroType == "Drow Ranger" || heroType == "Sniper" || heroType == "Mirana" ||
+             heroType == "Assassin") {
+        baseType = "Assassin";
+    }
+    // Intelligence heroes (Mage type)
+    else if (heroType == "Invoker" || heroType == "Crystal Maiden" || heroType == "Lina" ||
+             heroType == "Lion" || heroType == "Shadow Fiend" || heroType == "Zeus" ||
+             heroType == "Mage") {
+        baseType = "Mage";
+    }
+    
+    if (baseType == "Warrior") {
+        setupHero_Warrior(heroComp);
+    } else if (baseType == "Mage") {
+        setupHero_Mage(heroComp);
+    } else if (baseType == "Assassin") {
+        setupHero_Assassin(heroComp);
+    } else {
+        // Default to Warrior for unknown types
+        setupHero_Warrior(heroComp);
+    }
+    
+    // Store the actual hero name for display
+    heroComp.heroName = heroType;
     
     recalculateStats(heroComp);
     heroComp.currentHealth = heroComp.maxHealth;
     heroComp.currentMana = heroComp.maxMana;
+    
+    LOG_INFO("Created hero '{}' (base type: {}) for team {} at ({}, {}, {})", 
+             heroType, baseType, teamId, position.x, position.y, position.z);
     
     return hero;
 }

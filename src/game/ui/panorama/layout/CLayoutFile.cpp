@@ -1,5 +1,12 @@
 #include "CLayoutFile.h"
 #include "CStyleSheet.h"
+#include "../widgets/CLabel.h"
+#include "../widgets/CImage.h"
+#include "../widgets/CButton.h"
+#include "../widgets/CProgressBar.h"
+#include "../widgets/CTextEntry.h"
+#include "../widgets/CSlider.h"
+#include "../widgets/CDropDown.h"
 #include <fstream>
 #include <sstream>
 

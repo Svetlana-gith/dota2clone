@@ -322,6 +322,7 @@ void DebugConsole::DestroyUI() {
     if (!m_ui || !m_ui->root) return;
     
     auto& engine = Panorama::CUIEngine::Instance();
+    engine.ClearInputStateForSubtree(m_ui->root.get());
     auto* uiRoot = engine.GetRoot();
     if (uiRoot) {
         uiRoot->RemoveChild(m_ui->root.get());

@@ -97,6 +97,9 @@ public:
     
     // GPU synchronization for safe resource cleanup
     void WaitForPreviousFrame();
+    // Stronger sync: enqueue a fence signal and wait until the GPU has completed all prior work
+    // on the direct command queue. Use this before releasing resources that may still be in-flight.
+    void WaitForGpuIdle();
 
 private:
     static constexpr uint32_t kFrameCount = 3;

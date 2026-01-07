@@ -1,6 +1,6 @@
 #pragma once
 
-#include "PanoramaTypes.h"
+#include "../core/PanoramaTypes.h"
 #include <d3d12.h>
 #include <wrl/client.h>
 #include <string>

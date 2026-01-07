@@ -102,6 +102,7 @@ enum class ObjectType : u8 {
     None = 0,
     Tower,          // Defense tower spawn point
     CreepSpawn,     // Creep spawn point
+    HeroSpawn,      // Hero spawn point (fountain area)
     NeutralCamp,    // Neutral monster camp
     Tree,           // Decorative tree
     Rock,           // Decorative rock

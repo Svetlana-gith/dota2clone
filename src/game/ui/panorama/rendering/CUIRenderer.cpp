@@ -301,7 +301,7 @@ IDWriteTextFormat* CUIRenderer::GetOrCreateTextFormat(const FontInfo& font) {
 void CUIRenderer::BeginFrame() {
     m_vertices.clear();
     m_textVertices.clear();
-    m_textUploadCursorVertices = 0;
+    m_uploadCursorVertices = 0;
     
     // Advance frame index
     m_currentFrameIndex = (m_currentFrameIndex + 1) % kFrameCount;
@@ -347,6 +347,19 @@ void CUIRenderer::FlushBatch() {
     
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
     if (!vertexBuffer) return;
+
+    // Use a unique upload offset per flush to avoid overwriting data referenced by earlier draw calls.
+    static constexpr size_t kMaxVerticesPerFrame = 40000;
+    const size_t uploadVertexOffset = m_uploadCursorVertices;
+    const size_t uploadVertexCount = m_vertices.size();
+    if (uploadVertexOffset + uploadVertexCount > kMaxVerticesPerFrame) {
+        LOG_ERROR("CUIRenderer::FlushBatch overflow: need {} vertices at offset {}, but max is {}. Dropping solid batch.",
+            uploadVertexCount, uploadVertexOffset, kMaxVerticesPerFrame);
+        m_vertices.clear();
+        return;
+    }
+
+    const size_t solidOffsetBytes = uploadVertexOffset * sizeof(UIVertex);
     
     // Log first few flushes
     static int flushCount = 0;
@@ -360,7 +373,7 @@ void CUIRenderer::FlushBatch() {
     D3D12_RANGE readRange = { 0, 0 };
     HRESULT hr = vertexBuffer->Map(0, &readRange, &mappedData);
     if (SUCCEEDED(hr)) {
-        memcpy(mappedData, m_vertices.data(), m_vertices.size() * sizeof(UIVertex));
+        memcpy(static_cast<uint8_t*>(mappedData) + solidOffsetBytes, m_vertices.data(), m_vertices.size() * sizeof(UIVertex));
         vertexBuffer->Unmap(0, nullptr);
     } else {
         LOG_ERROR("CUIRenderer::FlushBatch: Failed to map vertex buffer");
@@ -368,9 +381,13 @@ void CUIRenderer::FlushBatch() {
     }
     
     // Draw
-    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferViews[m_currentFrameIndex]);
+    D3D12_VERTEX_BUFFER_VIEW view = m_vertexBufferViews[m_currentFrameIndex];
+    view.BufferLocation += solidOffsetBytes;
+    view.SizeInBytes = (UINT)(m_vertices.size() * sizeof(UIVertex));
+    m_commandList->IASetVertexBuffers(0, 1, &view);
     m_commandList->DrawInstanced((UINT)m_vertices.size(), 1, 0, 0);
     
+    m_uploadCursorVertices += uploadVertexCount;
     m_vertices.clear();
 }
 
@@ -379,15 +396,25 @@ void CUIRenderer::FlushTextBatch() {
     
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
     if (!vertexBuffer) return;
-    
-    // Text uses second half of buffer
-    const size_t textOffset = 20000 * sizeof(UIVertex);
+
+    // Use a unique upload offset per flush to avoid overwriting data referenced by earlier draw calls.
+    static constexpr size_t kMaxVerticesPerFrame = 40000;
+    const size_t uploadVertexOffset = m_uploadCursorVertices;
+    const size_t uploadVertexCount = m_textVertices.size();
+    if (uploadVertexOffset + uploadVertexCount > kMaxVerticesPerFrame) {
+        LOG_ERROR("CUIRenderer::FlushTextBatch overflow: need {} vertices at offset {}, but max is {}. Dropping text batch.",
+            uploadVertexCount, uploadVertexOffset, kMaxVerticesPerFrame);
+        m_textVertices.clear();
+        return;
+    }
+
+    const size_t textOffsetBytes = uploadVertexOffset * sizeof(UIVertex);
     
     void* mappedData = nullptr;
     D3D12_RANGE readRange = { 0, 0 };
     HRESULT hr = vertexBuffer->Map(0, &readRange, &mappedData);
     if (SUCCEEDED(hr)) {
-        char* dest = static_cast<char*>(mappedData) + textOffset + m_textUploadCursorVertices * sizeof(UIVertex);
+        char* dest = static_cast<char*>(mappedData) + textOffsetBytes;
         memcpy(dest, m_textVertices.data(), m_textVertices.size() * sizeof(UIVertex));
         vertexBuffer->Unmap(0, nullptr);
     }
@@ -398,7 +425,7 @@ void CUIRenderer::FlushTextBatch() {
     }
     
     D3D12_VERTEX_BUFFER_VIEW textView = m_vertexBufferViews[m_currentFrameIndex];
-    textView.BufferLocation += textOffset + m_textUploadCursorVertices * sizeof(UIVertex);
+    textView.BufferLocation += textOffsetBytes;
     textView.SizeInBytes = (UINT)(m_textVertices.size() * sizeof(UIVertex));
     
     m_commandList->IASetVertexBuffers(0, 1, &textView);
@@ -409,7 +436,7 @@ void CUIRenderer::FlushTextBatch() {
         m_commandList->SetPipelineState(m_pipelineState.Get());
     }
     
-    m_textUploadCursorVertices += m_textVertices.size();
+    m_uploadCursorVertices += uploadVertexCount;
     m_textVertices.clear();
 }
 
@@ -438,6 +465,12 @@ Vector2D CUIRenderer::TransformPoint(f32 x, f32 y) const {
 }
 
 void CUIRenderer::AddQuad(const Rect2D& rect, const Color& color, f32 u0, f32 v0, f32 u1, f32 v1) {
+    // Preserve draw order: if there is pending text that was submitted earlier,
+    // flush it before queuing any solid geometry that should appear above it.
+    if (!m_textVertices.empty()) {
+        FlushTextBatch();
+    }
+
     auto p0 = TransformPoint(rect.x, rect.y);
     auto p1 = TransformPoint(rect.x + rect.width, rect.y);
     auto p2 = TransformPoint(rect.x + rect.width, rect.y + rect.height);
@@ -522,6 +555,12 @@ void CUIRenderer::DrawRadialGradient(const Rect2D& rect, const Color& centerColo
 void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const Color& color, 
                            const FontInfo& font, HorizontalAlign hAlign, VerticalAlign vAlign) {
     if (text.empty()) return;
+
+    // Preserve draw order: if there is pending solid geometry that was submitted earlier,
+    // flush it before queuing text that should appear above it.
+    if (!m_vertices.empty()) {
+        FlushBatch();
+    }
     
     // For DX12, we render text as colored quads (simplified approach)
     // A full implementation would use a font atlas

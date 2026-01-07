@@ -17,7 +17,7 @@ struct VideoSettings {
     u32 resolutionHeight = 1080;
     WindowMode windowMode = WindowMode::Borderless;
     bool vsync = true;
-    u8 maxFPS = 0;  // 0 = unlimited
+    u16 maxFPS = 0;  // 0 = unlimited, supports values > 255
     u8 textureQuality = 2;  // 0=Low, 1=Medium, 2=High, 3=Ultra
     u8 shadowQuality = 2;
     u8 effectsQuality = 2;

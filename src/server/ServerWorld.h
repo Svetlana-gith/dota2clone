@@ -46,6 +46,9 @@ public:
     void removeClient(ClientId clientId) override;
     Entity getClientControlledEntity(ClientId clientId) const override;
     
+    // Client hero management
+    void setClientHero(ClientId clientId, Entity heroEntity);
+    
     // Component management (forwarded to EntityManager)
     template<typename Component, typename... Args>
     Component& addComponent(Entity entity, Args&&... args) {
@@ -90,6 +93,12 @@ public:
     TickNumber getCurrentTick() const { return currentTick_; }
     void setTickRate(u32 tickRate) { tickRate_ = tickRate; }
     
+    // Set game active without creating default heroes (for multiplayer clients)
+    void setGameActive(bool active) { gameActive_ = active; }
+    
+    // Network ID assignment (for external hero creation)
+    NetworkId assignNetworkId(Entity entity);
+    
 private:
     EntityManager entityManager_;
     Map<String, UniquePtr<System>> systems_;
@@ -119,7 +128,6 @@ private:
 #endif
     
     // Helper methods
-    NetworkId assignNetworkId(Entity entity);
     void removeNetworkId(Entity entity);
     void updateSystems(f32 deltaTime);
     void updateGameState(f32 deltaTime);

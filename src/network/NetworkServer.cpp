@@ -297,16 +297,25 @@ void NetworkServer::sendSnapshotToClient(ClientId clientId, const WorldSnapshot&
     auto it = clients_.find(clientId);
     if (it == clients_.end()) return;
     
+    // Serialize snapshot to buffer
+    u8 snapshotBuffer[MAX_PACKET_SIZE - PacketHeader::SIZE];
+    size_t snapshotSize = snapshot.serialize(snapshotBuffer, sizeof(snapshotBuffer));
+    
+    if (snapshotSize == 0) {
+        LOG_WARN("Failed to serialize snapshot (too many entities?)");
+        return;
+    }
+    
     PacketHeader header;
     header.type = PacketType::WorldSnapshot;
     header.sequence = nextSequence_++;
-    header.payloadSize = sizeof(WorldSnapshot);
+    header.payloadSize = static_cast<u16>(snapshotSize);
     
     u8 packet[MAX_PACKET_SIZE];
     memcpy(packet, &header, PacketHeader::SIZE);
-    memcpy(packet + PacketHeader::SIZE, &snapshot, sizeof(WorldSnapshot));
+    memcpy(packet + PacketHeader::SIZE, snapshotBuffer, snapshotSize);
     
-    size_t packetSize = PacketHeader::SIZE + sizeof(WorldSnapshot);
+    size_t packetSize = PacketHeader::SIZE + snapshotSize;
     socket_.sendTo(packet, packetSize, it->second.address);
     
     totalPacketsSent_++;

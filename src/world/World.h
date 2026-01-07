@@ -114,6 +114,11 @@ public:
         serverWorld_->startGame();
     }
     
+    // Set game active without creating default heroes (for multiplayer clients)
+    void setGameActive(bool active) {
+        serverWorld_->setGameActive(active);
+    }
+    
     void pauseGame() {
         serverWorld_->pauseGame();
     }

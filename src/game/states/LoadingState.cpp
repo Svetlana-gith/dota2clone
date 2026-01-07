@@ -1,8 +1,10 @@
 #include "../GameState.h"
 #include "../DebugConsole.h"
-#include "../ui/panorama/CUIEngine.h"
-#include "../ui/panorama/CPanel2D.h"
-#include "../ui/panorama/GameEvents.h"
+#include "../ui/panorama/core/CUIEngine.h"
+#include "../ui/panorama/core/CPanel2D.h"
+#include "../ui/panorama/widgets/CLabel.h"
+#include "../ui/panorama/widgets/CProgressBar.h"
+#include "../ui/panorama/core/GameEvents.h"
 #include "../../client/ClientWorld.h"
 #include "../../server/ServerWorld.h"
 #include "../../world/World.h"
@@ -14,6 +16,8 @@
 #include "../../world/TowerSystem.h"
 #include "../../world/ProjectileSystem.h"
 #include "../../world/CollisionSystem.h"
+#include "../../world/TerrainMesh.h"
+#include "../../world/TerrainTools.h"
 #include "../../serialization/MapIO.h"
 #include "../../renderer/DirectXRenderer.h"
 
@@ -21,6 +25,48 @@
 extern DirectXRenderer* g_renderer;
 
 namespace Game {
+
+static void CreateFallbackTerrain(::WorldEditor::World& world) {
+    // Create a simple flat terrain so InGame has something visible even when no map JSON exists.
+    // Wait for GPU to finish before destroying mesh resources
+    if (g_renderer) {
+        g_renderer->WaitForGpuIdle();
+    }
+    world.clearEntities();
+
+    Entity terrainE = world.createEntity("Terrain");
+    auto& terrainTransform = world.addComponent<WorldEditor::TransformComponent>(terrainE);
+    terrainTransform.position = Vec3(0.0f, 0.0f, 0.0f);
+    terrainTransform.rotation = Quat(1.0f, 0.0f, 0.0f, 0.0f);
+    terrainTransform.scale = Vec3(1.0f);
+
+    auto& terrain = world.addComponent<WorldEditor::TerrainComponent>(terrainE);
+    // Dota 2 scale: 256x256 tiles @ 64 units = 16384x16384 units
+    // Grid navigation uses 64 unit cells (from Dota 2 FGD: @gridnav(64, 32, 32, 16384))
+    WorldEditor::TerrainTools::initTileTerrain(terrain, 256, 256, 64.0f, 128.0f);
+    WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain);
+
+    auto& terrainMesh = world.addComponent<WorldEditor::MeshComponent>(terrainE);
+    terrainMesh.name = "Terrain";
+    WorldEditor::TerrainMesh::buildMesh(terrain, terrainMesh);
+    terrainMesh.visible = true;
+    terrainMesh.gpuBuffersCreated = false;
+    terrainMesh.gpuUploadNeeded = true;
+    terrainMesh.gpuConstantBuffersCreated = false;
+
+    // Simple green material.
+    Entity matE = world.createEntity("TerrainMaterial");
+    auto& mat = world.addComponent<WorldEditor::MaterialComponent>(matE);
+    mat.name = "TerrainMaterial";
+    mat.baseColor = Vec3(0.20f, 0.55f, 0.20f);
+    mat.metallic = 0.0f;
+    mat.roughness = 1.0f;
+    mat.gpuBufferCreated = false;
+    terrainMesh.materialEntity = matE;
+
+    LOG_INFO("LoadingState: Created fallback terrain (entities={})", world.getEntityCount());
+    ConsoleLog("Fallback map: generated terrain (no maps/*.json found)");
+}
 
 // ============ Loading UI Structure ============
 
@@ -146,6 +192,7 @@ void LoadingState::CreateUI() {
 void LoadingState::DestroyUI() {
     if (m_ui->root) {
         auto& engine = Panorama::CUIEngine::Instance();
+        engine.ClearInputStateForSubtree(m_ui->root.get());
         if (auto* uiRoot = engine.GetRoot()) {
             uiRoot->RemoveChild(m_ui->root.get());
         }
@@ -239,6 +286,11 @@ void LoadingState::Update(f32 deltaTime) {
                 "../maps/" + mapName + ".json"                  // One level up
             };
             
+            // Wait for GPU before MapIO::load clears entities
+            if (g_renderer) {
+                g_renderer->WaitForGpuIdle();
+            }
+            
             bool loaded = false;
             for (const auto& mapPath : searchPaths) {
                 String loadError;
@@ -252,7 +304,10 @@ void LoadingState::Update(f32 deltaTime) {
             
             if (!loaded) {
                 LOG_WARN("LoadingState: Failed to load map from any path");
-                ConsoleLog("WARNING: Map not found, using empty world");
+                ConsoleLog("WARNING: Map not found, generating fallback map");
+                if (m_gameWorld) {
+                    CreateFallbackTerrain(*m_gameWorld);
+                }
             }
         } else {
             LOG_WARN("LoadingState: No renderer available for World creation");

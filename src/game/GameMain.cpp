@@ -11,6 +11,7 @@
 #include <dxgi1_4.h>
 #include <string>
 #include <chrono>
+#include <thread>
 #include <fstream>
 
 #include <spdlog/spdlog.h>
@@ -19,7 +20,8 @@
 
 #include "GameState.h"
 #include "DebugConsole.h"
-#include "ui/panorama/CUIEngine.h"
+#include "SettingsManager.h"
+#include "ui/panorama/core/CUIEngine.h"
 #include "../network/NetworkCommon.h"
 #include "../renderer/DirectXRenderer.h"
 #include "../world/World.h"
@@ -181,6 +183,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Calculate delta time
         auto currentTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        
+        // Apply FPS limit if set (maxFPS > 0)
+        // Load settings to get current maxFPS value
+        static bool settingsLoaded = false;
+        static u16 maxFPS = 300; // Default to 300 FPS
+        if (!settingsLoaded) {
+            Game::SettingsManager::Instance().Load("settings.json");
+            maxFPS = Game::SettingsManager::Instance().Video().maxFPS;
+            settingsLoaded = true;
+            if (maxFPS > 0) {
+                Log(("FPS limit set to " + std::to_string(maxFPS)).c_str());
+            } else {
+                Log("FPS unlimited");
+            }
+        }
+        
+        if (maxFPS > 0) {
+            const float targetFrameTime = 1.0f / maxFPS;
+            if (deltaTime < targetFrameTime) {
+                // Sleep for the remaining time
+                auto sleepTime = std::chrono::duration<float>(targetFrameTime - deltaTime);
+                std::this_thread::sleep_for(sleepTime);
+                
+                // Recalculate delta time after sleep
+                currentTime = std::chrono::high_resolution_clock::now();
+                deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+            }
+        }
+        
         lastTime = currentTime;
         
         // Cap delta time
@@ -195,6 +226,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         // Render
         try {
             Render();
+        } catch (const DirectXException& e) {
+            // High-signal diagnostics for the common "stuck on last frame" issue:
+            // if rendering fails, the window shows the last successfully presented frame.
+            LOG_ERROR("Render exception (DirectXException): {}", e.what());
+            LOG_ERROR("  - HRESULT: 0x{:08X}", (unsigned)e.GetHRESULT());
+            if (g_renderer && g_renderer->GetDevice()) {
+                const HRESULT removed = g_renderer->GetDevice()->GetDeviceRemovedReason();
+                LOG_ERROR("  - DeviceRemovedReason: 0x{:08X}", (unsigned)removed);
+            }
+            spdlog::default_logger()->flush();
         } catch (const std::exception& e) {
             LOG_ERROR("Render exception: {}", e.what());
             spdlog::default_logger()->flush();
@@ -358,7 +399,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
             
         case WM_CLOSE:
+            // Ensure the window is actually destroyed; otherwise we may stop pumping messages
+            // while a borderless fullscreen window still exists, which can look like a "glitch".
             g_running = false;
+            DestroyWindow(hWnd);
             return 0;
             
         case WM_KEYDOWN:
@@ -380,6 +424,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if (currentState == Game::EGameState::MainMenu || 
                     currentState == Game::EGameState::Login) {
                     g_running = false;
+                    DestroyWindow(hWnd);
                     return 0;
                 }
                 // Otherwise let the state handle it (pause menu, etc.)
@@ -405,6 +450,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Handle Alt+F4
             if (wParam == VK_F4 && (lParam & (1 << 29))) {
                 g_running = false;
+                DestroyWindow(hWnd);
                 return 0;
             }
             break;

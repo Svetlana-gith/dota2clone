@@ -4,8 +4,8 @@
  * Parses Valve-style XML layout files for Panorama UI
  */
 
-#include "PanoramaTypes.h"
-#include "CPanel2D.h"
+#include "../core/PanoramaTypes.h"
+#include "../core/CPanel2D.h"
 #include <memory>
 #include <string>
 #include <unordered_map>

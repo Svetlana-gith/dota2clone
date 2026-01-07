@@ -1,7 +1,7 @@
 #include "GameState.h"
 #include "DebugConsole.h"
-#include "ui/panorama/CUIEngine.h"
-#include "ui/panorama/CPanel2D.h"
+#include "ui/panorama/core/CUIEngine.h"
+#include "ui/panorama/core/CPanel2D.h"
 #include "auth/AuthClient.h"
 #include "network/NetworkClient.h"
 #include <algorithm>

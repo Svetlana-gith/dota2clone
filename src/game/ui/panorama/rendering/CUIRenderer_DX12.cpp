@@ -1,5 +1,5 @@
 #include "CUIRenderer.h"
-#include "PanoramaTypes.h"
+#include "../core/PanoramaTypes.h"
 #include "FontAtlas.h"
 #include <spdlog/spdlog.h>
 #include <d3dcompiler.h>
@@ -123,7 +123,7 @@ void CUIRenderer::BeginFrame() {
     m_vertices.clear();
     m_textVertices.clear();
     m_indices.clear();
-    m_textUploadCursorVertices = 0;
+    m_uploadCursorVertices = 0;
     
     // Reset effects
     ClearEffects();
@@ -140,10 +140,9 @@ void CUIRenderer::BeginFrame() {
 }
 
 void CUIRenderer::EndFrame() {
-    // Flush solid geometry first
+    // Flush any remaining queued draws.
+    // NOTE: We may flush multiple times per frame to preserve draw order between text and solids.
     FlushBatch();
-    
-    // Then flush text
     FlushTextBatch();
 }
 
@@ -179,14 +178,29 @@ void CUIRenderer::FlushBatch() {
     
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
-    
-    // Upload vertex data to first half of buffer (offset 0)
+
+    // Upload vertex data at a unique offset to preserve draw order and avoid overwriting
+    // previously recorded draw calls that reference this same upload heap.
+    static constexpr size_t kMaxVerticesPerFrame = 120000;
+    const size_t uploadVertexOffset = m_uploadCursorVertices;
+    const size_t uploadVertexCount = m_vertices.size();
+    if (uploadVertexOffset + uploadVertexCount > kMaxVerticesPerFrame) {
+        LOG_ERROR("FlushBatch overflow: need {} vertices at offset {}, but max is {}. Dropping solid batch.",
+            uploadVertexCount, uploadVertexOffset, kMaxVerticesPerFrame);
+        m_vertices.clear();
+        m_indices.clear();
+        return;
+    }
+
+    const size_t solidOffsetBytes = uploadVertexOffset * sizeof(UIVertex);
+
+    // Upload vertex data
     void* pData = nullptr;
     D3D12_RANGE readRange = { 0, 0 };
     HRESULT hr = vertexBuffer->Map(0, &readRange, &pData);
     if (SUCCEEDED(hr)) {
         size_t dataSize = m_vertices.size() * sizeof(UIVertex);
-        memcpy(pData, m_vertices.data(), dataSize);
+        memcpy((uint8_t*)pData + solidOffsetBytes, m_vertices.data(), dataSize);
         vertexBuffer->Unmap(0, nullptr);
     } else {
         return;
@@ -213,9 +227,9 @@ void CUIRenderer::FlushBatch() {
     float sdfConsts[2] = { 1.0f, 0.0f };
     m_commandList->SetGraphicsRoot32BitConstants(2, 2, sdfConsts, 0);
     
-    // Create vertex buffer view for solid geometry (starts at 0)
+    // Create vertex buffer view for solid geometry (starts at our per-flush offset)
     D3D12_VERTEX_BUFFER_VIEW solidView = {};
-    solidView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+    solidView.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + solidOffsetBytes;
     solidView.SizeInBytes = (UINT)(m_vertices.size() * sizeof(UIVertex));
     solidView.StrideInBytes = sizeof(UIVertex);
     
@@ -224,6 +238,9 @@ void CUIRenderer::FlushBatch() {
     
     // Draw
     m_commandList->DrawInstanced((UINT)m_vertices.size(), 1, 0, 0);
+
+    // Advance upload cursor and clear batch
+    m_uploadCursorVertices += uploadVertexCount;
     
     // Clear batch
     m_vertices.clear();
@@ -251,12 +268,10 @@ void CUIRenderer::FlushTextBatch() {
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
     
-    // Upload vertex data to the second half of the buffer.
-    // IMPORTANT: We can flush text multiple times per frame (e.g. different font sizes).
-    // Each flush must use a unique offset to avoid overwriting data referenced by earlier draw calls.
+    // Upload vertex data at a unique offset to preserve draw order and avoid overwriting
+    // previously recorded draw calls that reference this same upload heap.
     static constexpr size_t kMaxVerticesPerFrame = 120000;
-    static constexpr size_t kTextBaseVertexOffset = 60000;
-    const size_t uploadVertexOffset = kTextBaseVertexOffset + m_textUploadCursorVertices;
+    const size_t uploadVertexOffset = m_uploadCursorVertices;
     const size_t uploadVertexCount = m_textVertices.size();
     if (uploadVertexOffset + uploadVertexCount > kMaxVerticesPerFrame) {
         LOG_ERROR("FlushTextBatch overflow: need {} vertices at offset {}, but max is {}. Dropping text batch.",
@@ -320,8 +335,8 @@ void CUIRenderer::FlushTextBatch() {
     // Draw
     m_commandList->DrawInstanced((UINT)m_textVertices.size(), 1, 0, 0);
     
-    // Clear text batch
-    m_textUploadCursorVertices += uploadVertexCount;
+    // Advance upload cursor and clear text batch
+    m_uploadCursorVertices += uploadVertexCount;
     m_textVertices.clear();
 }
 
@@ -405,13 +420,17 @@ void CUIRenderer::SetTransformOrigin(f32 x, f32 y) {
 // ============ Clipping ============
 
 void CUIRenderer::PushClipRect(const Rect2D& rect) {
+    // Changing scissor state must not affect previously queued draws.
     FlushBatch();
+    FlushTextBatch();
     m_clipStack.push_back(rect);
     UpdateScissorRect();
 }
 
 void CUIRenderer::PopClipRect() {
+    // Changing scissor state must not affect previously queued draws.
     FlushBatch();
+    FlushTextBatch();
     if (!m_clipStack.empty()) m_clipStack.pop_back();
     UpdateScissorRect();
 }
@@ -437,6 +456,12 @@ void CUIRenderer::UpdateScissorRect() {
 // ============ Geometry Generation ============
 
 void CUIRenderer::AddQuad(const Rect2D& rect, const Color& color, f32 u0, f32 v0, f32 u1, f32 v1) {
+    // Preserve draw order: if there is pending text that was submitted earlier in the frame,
+    // flush it before queuing any solid geometry that should appear above it.
+    if (!m_textVertices.empty()) {
+        FlushTextBatch();
+    }
+
     auto p0 = TransformPoint(rect.x, rect.y);
     auto p1 = TransformPoint(rect.x + rect.width, rect.y);
     auto p2 = TransformPoint(rect.x + rect.width, rect.y + rect.height);
@@ -484,6 +509,12 @@ void CUIRenderer::DrawRoundedRect(const Rect2D& rect, const Color& color, f32 tl
 }
 
 void CUIRenderer::DrawGradientRect(const Rect2D& rect, const Color& startColor, const Color& endColor, bool vertical) {
+    // Preserve draw order: gradients are solid geometry, so they must not end up behind
+    // previously submitted (but not yet flushed) text.
+    if (!m_textVertices.empty()) {
+        FlushTextBatch();
+    }
+
     auto p0 = TransformPoint(rect.x, rect.y);
     auto p1 = TransformPoint(rect.x + rect.width, rect.y);
     auto p2 = TransformPoint(rect.x + rect.width, rect.y + rect.height);
@@ -515,6 +546,12 @@ void CUIRenderer::DrawRadialGradient(const Rect2D& rect, const Color& centerColo
 }
 
 void CUIRenderer::DrawLine(f32 x1, f32 y1, f32 x2, f32 y2, const Color& color, f32 thickness) {
+    // Preserve draw order: lines are solid geometry, so they must not end up behind
+    // previously submitted (but not yet flushed) text.
+    if (!m_textVertices.empty()) {
+        FlushTextBatch();
+    }
+
     f32 dx = x2 - x1;
     f32 dy = y2 - y1;
     f32 len = std::sqrt(dx * dx + dy * dy);
@@ -540,6 +577,12 @@ void CUIRenderer::DrawLine(f32 x1, f32 y1, f32 x2, f32 y2, const Color& color, f
 }
 
 void CUIRenderer::DrawCircle(f32 x, f32 y, f32 radius, const Color& color, bool filled) {
+    // Preserve draw order: circles are solid geometry, so they must not end up behind
+    // previously submitted (but not yet flushed) text.
+    if (!m_textVertices.empty()) {
+        FlushTextBatch();
+    }
+
     const int segments = 32;
     const f32 PI = 3.14159265f;
     
@@ -574,6 +617,12 @@ void CUIRenderer::DrawCircle(f32 x, f32 y, f32 radius, const Color& color, bool 
 void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const Color& color, 
                            const FontInfo& font, HorizontalAlign hAlign, VerticalAlign vAlign) {
     if (text.empty()) return;
+
+    // Preserve draw order: if there is pending solid geometry that was submitted earlier,
+    // flush it before queuing text that should appear above it.
+    if (!m_vertices.empty()) {
+        FlushBatch();
+    }
     
     // Debug: log all DrawText calls to understand rendering order
     // Try to use SDF font atlas if available.

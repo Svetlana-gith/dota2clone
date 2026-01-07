@@ -5,7 +5,7 @@
  */
 
 #include "PanoramaTypes.h"
-#include "CStyleSheet.h"
+#include "../layout/CStyleSheet.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -28,6 +28,9 @@ public:
     void SetID(const std::string& id) { m_id = id; }
     PanelType GetPanelType() const { return m_panelType; }
     const std::string& GetPanelTypeName() const;
+
+    // Returns true if this panel is the given ancestor, or is contained within that ancestor subtree.
+    bool IsDescendantOf(const CPanel2D* ancestor) const;
     
     // ============ Hierarchy (Valve API) ============
     CPanel2D* GetParent() const { return m_parent; }
@@ -203,189 +206,13 @@ protected:
     f32 ResolveLength(const Length& len, f32 parentSize, f32 viewportSize) const;
 };
 
-// ============ Label Panel ============
-
-class CLabel : public CPanel2D {
-public:
-    CLabel();
-    explicit CLabel(const std::string& text, const std::string& id = "");
-    
-    void SetText(const std::string& text);
-    const std::string& GetText() const { return m_text; }
-    
-    // Localization (Valve: SetLocString)
-    void SetLocString(const std::string& token);
-    
-    // HTML-like text (Valve supports basic HTML in labels)
-    void SetHTML(bool html) { m_isHTML = html; }
-    bool IsHTML() const { return m_isHTML; }
-    
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    std::string m_text;
-    std::string m_locToken;
-    bool m_isHTML = false;
-};
-
-// ============ Image Panel ============
-
-class CImage : public CPanel2D {
-public:
-    CImage();
-    explicit CImage(const std::string& src, const std::string& id = "");
-    
-    void SetImage(const std::string& path);
-    const std::string& GetImage() const { return m_imagePath; }
-    
-    // Scaling mode (Valve: scaling)
-    enum class ScalingMode { None, Stretch, StretchToFitPreserveAspect, StretchToFitXPreserveAspect, StretchToFitYPreserveAspect, StretchToCover };
-    void SetScaling(ScalingMode mode) { m_scaling = mode; }
-    
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    std::string m_imagePath;
-    ScalingMode m_scaling = ScalingMode::Stretch;
-};
-
-// ============ Button Panel ============
-
-class CButton : public CPanel2D {
-public:
-    CButton();
-    explicit CButton(const std::string& text, const std::string& id = "");
-    
-    void SetText(const std::string& text);
-    const std::string& GetText() const;
-    
-    // Click handler (convenience)
-    void SetOnActivate(std::function<void()> handler);
-    
-    bool OnMouseUp(f32 x, f32 y, i32 button) override;
-    bool OnKeyDown(i32 key) override;
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    std::shared_ptr<CLabel> m_label;
-    std::function<void()> m_onActivate;
-};
-
-// ============ Progress Bar ============
-
-class CProgressBar : public CPanel2D {
-public:
-    CProgressBar();
-    explicit CProgressBar(const std::string& id);
-    
-    void SetValue(f32 value);  // 0.0 - 1.0
-    f32 GetValue() const { return m_value; }
-    
-    void SetMin(f32 min) { m_min = min; }
-    void SetMax(f32 max) { m_max = max; }
-    
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    f32 m_value = 0;
-    f32 m_min = 0;
-    f32 m_max = 1;
-};
-
-// ============ Text Entry ============
-
-class CTextEntry : public CPanel2D {
-public:
-    CTextEntry();
-    explicit CTextEntry(const std::string& id);
-    
-    void SetText(const std::string& text);
-    const std::string& GetText() const { return m_text; }
-    
-    void SetPlaceholder(const std::string& placeholder) { m_placeholder = placeholder; }
-    void SetMaxChars(i32 max) { m_maxChars = max; }
-    void SetPassword(bool password) { m_isPassword = password; }
-    void SetPasswordMode(bool password) { m_isPassword = password; }  // Alias
-    
-    void SetOnTextChanged(std::function<void(const std::string&)> handler) { m_onTextChanged = handler; }
-    
-    void SetFocus() override;
-    bool OnKeyDown(i32 key) override;
-    bool OnTextInput(const std::string& text) override;
-    bool OnMouseDown(f32 x, f32 y, i32 button) override;
-    void Render(CUIRenderer* renderer) override;
-    
-    void Update(f32 deltaTime) override;
-    
-private:
-    std::string m_text;
-    std::string m_placeholder;
-    i32 m_cursorPos = 0;
-    i32 m_maxChars = -1;
-    bool m_isPassword = false;
-    f32 m_cursorBlinkTime = 0.0f;
-    std::function<void(const std::string&)> m_onTextChanged;
-};
-
-// ============ Slider ============
-
-class CSlider : public CPanel2D {
-public:
-    CSlider();
-    explicit CSlider(const std::string& id);
-    
-    void SetValue(f32 value);
-    f32 GetValue() const { return m_value; }
-    
-    void SetRange(f32 min, f32 max);
-    void SetStep(f32 step) { m_step = step; }
-    void SetDirection(bool vertical) { m_vertical = vertical; }
-    
-    void SetOnValueChanged(std::function<void(f32)> handler) { m_onValueChanged = handler; }
-    
-    bool OnMouseDown(f32 x, f32 y, i32 button) override;
-    bool OnMouseMove(f32 x, f32 y) override;
-    bool OnMouseUp(f32 x, f32 y, i32 button) override;
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    f32 m_value = 0;
-    f32 m_min = 0;
-    f32 m_max = 1;
-    f32 m_step = 0;
-    bool m_vertical = false;
-    bool m_dragging = false;
-    std::function<void(f32)> m_onValueChanged;
-};
-
-// ============ Dropdown ============
-
-class CDropDown : public CPanel2D {
-public:
-    CDropDown();
-    explicit CDropDown(const std::string& id);
-    
-    void AddOption(const std::string& id, const std::string& text);
-    void RemoveOption(const std::string& id);
-    void ClearOptions();
-    
-    void SetSelected(const std::string& id);
-    const std::string& GetSelected() const { return m_selectedId; }
-    
-    void SetOnSelectionChanged(std::function<void(const std::string&)> handler) { m_onSelectionChanged = handler; }
-    
-    bool OnMouseUp(f32 x, f32 y, i32 button) override;
-    void Render(CUIRenderer* renderer) override;
-    
-private:
-    struct Option {
-        std::string id;
-        std::string text;
-    };
-    std::vector<Option> m_options;
-    std::string m_selectedId;
-    bool m_isOpen = false;
-    std::function<void(const std::string&)> m_onSelectionChanged;
-};
+// Forward declarations for widget classes (defined in separate files)
+class CLabel;
+class CImage;
+class CButton;
+class CProgressBar;
+class CTextEntry;
+class CSlider;
+class CDropDown;
 
 } // namespace Panorama

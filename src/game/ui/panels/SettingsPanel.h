@@ -1,6 +1,10 @@
 #pragma once
 
-#include "../panorama/CPanel2D.h"
+#include "../panorama/core/CPanel2D.h"
+#include "../panorama/widgets/CLabel.h"
+#include "../panorama/widgets/CButton.h"
+#include "../panorama/widgets/CSlider.h"
+#include "../panorama/widgets/CDropDown.h"
 #include "../../SettingsManager.h"
 #include <memory>
 #include <vector>

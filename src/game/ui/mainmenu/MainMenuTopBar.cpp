@@ -1,5 +1,7 @@
 #include "MainMenuTopBar.h"
-#include "../panorama/CUIEngine.h"
+#include "../panorama/core/CUIEngine.h"
+#include "../panorama/widgets/CLabel.h"
+#include "../panorama/widgets/CButton.h"
 
 namespace Game {
 

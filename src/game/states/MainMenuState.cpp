@@ -1,9 +1,9 @@
 #include "../GameState.h"
 #include "../DebugConsole.h"
-#include "../ui/panorama/CUIEngine.h"
-#include "../ui/panorama/CPanel2D.h"
-#include "../ui/panorama/CStyleSheet.h"
-#include "../ui/panorama/GameEvents.h"
+#include "../ui/panorama/core/CUIEngine.h"
+#include "../ui/panorama/core/CPanel2D.h"
+#include "../ui/panorama/layout/CStyleSheet.h"
+#include "../ui/panorama/core/GameEvents.h"
 #include "../ui/panels/SettingsPanel.h"
 #include "../ui/panels/MatchmakingPanel.h"
 #include "../ui/panels/ReconnectPanel.h"
@@ -149,6 +149,7 @@ void MainMenuState::CreateUI() {
 void MainMenuState::DestroyUI() {
     if (m_ui->root) {
         auto& engine = Panorama::CUIEngine::Instance();
+        engine.ClearInputStateForSubtree(m_ui->root.get());
         if (auto* uiRoot = engine.GetRoot()) {
             uiRoot->RemoveChild(m_ui->root.get());
         }

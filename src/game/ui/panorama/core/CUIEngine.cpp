@@ -1,7 +1,7 @@
 #include "CUIEngine.h"
-#include "CStyleSheet.h"
-#include "CLayoutFile.h"
-#include "CUITextSystem.h"
+#include "../layout/CStyleSheet.h"
+#include "../layout/CLayoutFile.h"
+#include "../rendering/CUITextSystem.h"
 #include "DirectXRenderer.h"
 #include <fstream>
 #include <sstream>
@@ -46,6 +46,12 @@ bool CUIEngine::Initialize(ID3D12Device* device, DirectXRenderer* renderer, cons
 }
 
 void CUIEngine::Shutdown() {
+    // DX12 requirement: ensure GPU is done with any UI draw calls before releasing UI resources.
+    // Otherwise we can get intermittent driver/desktop glitches on exit.
+    if (m_dxRenderer) {
+        m_dxRenderer->WaitForGpuIdle();
+    }
+
     m_root.reset();
     m_globalStylesheet.reset();
     
@@ -134,6 +140,25 @@ void CUIEngine::ClearAllInputState() {
     m_pressedPanel = nullptr;
 }
 
+void CUIEngine::ClearInputStateForSubtree(CPanel2D* subtreeRoot) {
+    if (!subtreeRoot) return;
+
+    auto inSubtree = [subtreeRoot](CPanel2D* p) -> bool {
+        return p && p->IsDescendantOf(subtreeRoot);
+    };
+
+    if (inSubtree(m_focusedPanel)) {
+        m_focusedPanel->RemoveFocus();
+        m_focusedPanel = nullptr;
+    }
+    if (inSubtree(m_hoveredPanel)) {
+        m_hoveredPanel = nullptr;
+    }
+    if (inSubtree(m_pressedPanel)) {
+        m_pressedPanel = nullptr;
+    }
+}
+
 void CUIEngine::Update(f32 deltaTime) {
     if (m_root) {
         UpdatePanelRecursive(m_root.get(), deltaTime);
@@ -162,6 +187,10 @@ void CUIEngine::Render() {
     // Render pass
     m_renderer->BeginFrame();
     RenderPanelRecursive(m_root.get());
+    // Allow game-side overlay drawing inside the UI render pass.
+    if (m_customRenderCallback) {
+        m_customRenderCallback(m_renderer.get());
+    }
     m_renderer->EndFrame();
 }
 

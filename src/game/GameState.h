@@ -31,6 +31,10 @@ namespace auth {
 class AuthClient;
 } // namespace auth
 
+namespace Panorama {
+class CUIRenderer;
+} // namespace Panorama
+
 namespace Game {
 
 // Forward declarations
@@ -360,10 +364,24 @@ public:
                    std::unique_ptr<::WorldEditor::ServerWorld> server,
                    std::unique_ptr<::WorldEditor::World> gameWorld);
     
+    // Set selected hero from HeroPickState
+    void SetSelectedHero(const std::string& heroType) { m_selectedHeroType = heroType; }
+    
     // Access to gameplay controller (for UI components)
     ::WorldEditor::GameplayController* GetGameplayController() { return m_gameplayController.get(); }
     
+    // Setup map objects for both teams (bases, towers, barracks, creep spawns, waypoints)
+    void SetupMapObjects();
+    
 private:
+    // Helper methods for map object creation
+    Entity CreateBase(const Vec3& pos, i32 teamId, const std::string& name);
+    Entity CreateTower(const Vec3& pos, i32 teamId, i32 tier, i32 lane, const std::string& name);
+    Entity CreateBarracks(const Vec3& pos, i32 teamId, i32 lane, bool isMelee, const std::string& name);
+    Entity CreateCreepSpawn(const Vec3& pos, i32 teamId, i32 lane, const std::string& name);
+    Entity CreateWaypoint(const Vec3& pos, i32 lane, i32 order, const std::string& name);
+    Entity CreateHeroSpawn(const Vec3& pos, i32 teamId, i32 spawnIndex, const std::string& name);
+    
     // Helper to get shared NetworkClient from GameStateManager
     ::WorldEditor::Network::NetworkClient* GetNetworkClient();
     
@@ -373,7 +391,9 @@ private:
     void RenderHUD();
     void RenderHealthBars();
     void RenderTopBar();
+    void RenderCrosshair(Panorama::CUIRenderer* renderer);
     void UpdateHUDFromGameState();
+    void UpdatePerformanceStats(f32 deltaTime);
     void SetupNetworkCallbacks();
     void UpdateInputState();
     
@@ -383,6 +403,8 @@ private:
     void ProcessServerSnapshot();
     
     bool m_isPaused = false;
+    f32 m_fpsEma = 0.0f;
+    bool m_showCrosshair = true;
     
     // Game worlds
     std::unique_ptr<::WorldEditor::ClientWorld> m_clientWorld;
@@ -398,6 +420,9 @@ private:
     // Network input state
     f32 m_lastInputSendTime = 0.0f;
     u32 m_inputSequence = 0;
+    
+    // Selected hero from HeroPickState
+    std::string m_selectedHeroType = "Warrior";  // Default fallback
     
     struct GameHUD;
     std::unique_ptr<GameHUD> m_hud;

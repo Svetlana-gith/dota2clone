@@ -30,8 +30,25 @@ struct EntitySnapshot {
     // Entity type (for client-side rendering)
     u8 entityType = 0;  // 0=Unknown, 1=Hero, 2=Creep, 3=Tower, etc.
     
+    // Owner client ID (for heroes - identifies which client controls this entity)
+    ClientId ownerClientId = INVALID_CLIENT_ID;
+    
     EntitySnapshot() = default;
 };
+
+// Serialized snapshot header (fixed size, sent over network)
+struct SnapshotHeader {
+    TickNumber tick = 0;
+    f32 serverTime = 0.0f;
+    f32 gameTime = 0.0f;
+    i32 currentWave = 0;
+    f32 timeToNextWave = 0.0f;
+    SequenceNumber lastProcessedInput = 0;
+    u16 entityCount = 0;  // Number of EntitySnapshot following this header
+};
+
+// Maximum entities per snapshot packet (to fit in UDP packet)
+constexpr u32 MAX_ENTITIES_PER_SNAPSHOT = 16;
 
 // World snapshot (sent from server to client each tick)
 struct WorldSnapshot {
@@ -62,6 +79,74 @@ struct WorldSnapshot {
             }
         }
         return nullptr;
+    }
+    
+    // Serialize to buffer for network transmission
+    // Returns number of bytes written, or 0 on failure
+    size_t serialize(u8* buffer, size_t bufferSize) const {
+        size_t entityCount = std::min(entities.size(), (size_t)MAX_ENTITIES_PER_SNAPSHOT);
+        size_t requiredSize = sizeof(SnapshotHeader) + entityCount * sizeof(EntitySnapshot);
+        
+        if (bufferSize < requiredSize) {
+            return 0;
+        }
+        
+        // Write header
+        SnapshotHeader header;
+        header.tick = tick;
+        header.serverTime = serverTime;
+        header.gameTime = gameTime;
+        header.currentWave = currentWave;
+        header.timeToNextWave = timeToNextWave;
+        header.lastProcessedInput = lastProcessedInput;
+        header.entityCount = static_cast<u16>(entityCount);
+        
+        memcpy(buffer, &header, sizeof(SnapshotHeader));
+        
+        // Write entities
+        u8* entityPtr = buffer + sizeof(SnapshotHeader);
+        for (size_t i = 0; i < entityCount; ++i) {
+            memcpy(entityPtr, &entities[i], sizeof(EntitySnapshot));
+            entityPtr += sizeof(EntitySnapshot);
+        }
+        
+        return requiredSize;
+    }
+    
+    // Deserialize from buffer
+    // Returns true on success
+    bool deserialize(const u8* buffer, size_t bufferSize) {
+        if (bufferSize < sizeof(SnapshotHeader)) {
+            return false;
+        }
+        
+        // Read header
+        SnapshotHeader header;
+        memcpy(&header, buffer, sizeof(SnapshotHeader));
+        
+        size_t requiredSize = sizeof(SnapshotHeader) + header.entityCount * sizeof(EntitySnapshot);
+        if (bufferSize < requiredSize) {
+            return false;
+        }
+        
+        tick = header.tick;
+        serverTime = header.serverTime;
+        gameTime = header.gameTime;
+        currentWave = header.currentWave;
+        timeToNextWave = header.timeToNextWave;
+        lastProcessedInput = header.lastProcessedInput;
+        
+        // Read entities
+        entities.clear();
+        entities.resize(header.entityCount);
+        
+        const u8* entityPtr = buffer + sizeof(SnapshotHeader);
+        for (u16 i = 0; i < header.entityCount; ++i) {
+            memcpy(&entities[i], entityPtr, sizeof(EntitySnapshot));
+            entityPtr += sizeof(EntitySnapshot);
+        }
+        
+        return true;
     }
 };
 

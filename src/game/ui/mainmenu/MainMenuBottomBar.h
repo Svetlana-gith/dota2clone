@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../panorama/CPanel2D.h"
+#include "../panorama/core/CPanel2D.h"
 #include <memory>
 #include <functional>
 

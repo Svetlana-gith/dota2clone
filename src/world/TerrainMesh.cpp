@@ -1,5 +1,10 @@
 #include "TerrainMesh.h"
 #include "TerrainTools.h"
+#include "Components.h"
+
+#ifdef DIRECTX_RENDERER
+#include "../renderer/DirectXRenderer.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -105,6 +110,28 @@ void buildMesh(const TerrainComponent& terrainIn, MeshComponent& mesh) {
 
 void invalidateGpu(MeshComponent& mesh) {
 #ifdef DIRECTX_RENDERER
+    // Use deferred release to avoid deleting resources while GPU is using them
+    if (MeshComponent::s_renderer) {
+        if (mesh.vertexBuffer) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.vertexBuffer);
+        }
+        if (mesh.indexBuffer) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.indexBuffer);
+        }
+        if (mesh.vertexBufferUpload) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.vertexBufferUpload);
+        }
+        if (mesh.indexBufferUpload) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.indexBufferUpload);
+        }
+        if (mesh.perObjectConstantBuffer) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.perObjectConstantBuffer);
+        }
+        if (mesh.perObjectConstantBufferUpload) {
+            MeshComponent::s_renderer->DeferredReleaseResource(mesh.perObjectConstantBufferUpload);
+        }
+    }
+    
     mesh.gpuBuffersCreated = false;
     mesh.gpuConstantBuffersCreated = false;
     mesh.vertexBuffer.Reset();

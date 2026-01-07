@@ -1,6 +1,8 @@
 #pragma once
 
-#include "../panorama/CPanel2D.h"
+#include "../panorama/core/CPanel2D.h"
+#include "../panorama/widgets/CLabel.h"
+#include "../panorama/widgets/CButton.h"
 #include "network/MatchmakingClient.h"
 #include <memory>
 #include <functional>

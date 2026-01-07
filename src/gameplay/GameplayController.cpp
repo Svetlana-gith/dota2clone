@@ -12,16 +12,16 @@
 namespace WorldEditor {
 
 GameplayController::GameplayController() {
-    // Setup default Dota-style camera
+    // Setup default Dota-style camera (scaled for 16000x16000 map)
     camera_.yawDeg = -45.0f;
     camera_.pitchDeg = -45.0f;
     camera_.fovDeg = 60.0f;
-    camera_.nearPlane = 0.1f;
+    camera_.nearPlane = 1.0f;
     camera_.farPlane = 50000.0f;
     camera_.orthographic = false;
     camera_.lockTopDown = false;
-    camera_.moveSpeed = 50.0f;
-    camera_.position = Vec3(150.0f, 80.0f, 150.0f);
+    camera_.moveSpeed = 2500.0f;  // Scaled for 16000 map
+    camera_.position = Vec3(8000.0f, 1200.0f, 8000.0f);  // Center of map, Dota-like height
 }
 
 GameplayController::~GameplayController() = default;
@@ -258,10 +258,10 @@ void GameplayController::updateCameraFollow(f32 deltaTime) {
 }
 
 void GameplayController::focusOnPosition(const Vec3& position) {
-    // Calculate camera position to look at target
+    // Calculate camera position to look at target (scaled for 16000x16000 map)
     Vec3 forward = camera_.getForwardLH();
-    f32 distance = 100.0f;
-    f32 height = 80.0f;
+    f32 distance = 1500.0f;  // Scaled for 16000 map
+    f32 height = 1200.0f;    // Dota-like camera height
     
     camera_.position = position - forward * distance;
     camera_.position.y = height;
@@ -481,11 +481,12 @@ void GameplayController::handleLeftClick(const GameplayInput& input) {
 void GameplayController::handleRightClick(const GameplayInput& input) {
     if (!input.mouseInViewport) return;
     if (!gameActive_) return;
+    if (!world_) return;
     
     // Try to pick an entity first
     Entity picked = pickEntityAt(input.mousePos);
     
-    if (picked != INVALID_ENTITY && world_) {
+    if (picked != INVALID_ENTITY) {
         auto& reg = world_->getEntityManager().getRegistry();
         
         // Check if it's an enemy

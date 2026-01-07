@@ -1,5 +1,6 @@
 #include "MainMenuContent.h"
-#include "../panorama/CPanel2D.h"
+#include "../panorama/core/CPanel2D.h"
+#include "../panorama/widgets/CLabel.h"
 
 namespace Game {
 

@@ -8,7 +8,7 @@
  *   to the correct panel types (Label/Button/TextEntry), with optional localization.
  */
 
-#include "CPanel2D.h"
+#include "../core/CPanel2D.h"
 #include <string>
 
 namespace Panorama {

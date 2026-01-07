@@ -38,7 +38,7 @@
   "video": {
     "antiAliasing": true,
     "effectsQuality": 2,
-    "maxFPS": 0,
+    "maxFPS": 300,
     "renderScale": 1.0,
     "resolutionHeight": 1080,
     "resolutionWidth": 1920,

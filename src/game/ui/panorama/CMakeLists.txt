@@ -1,40 +1,65 @@
 # Panorama UI Library - Valve-style UI Framework
 add_library(panorama_ui STATIC
-    # Core types
-    PanoramaTypes.h
+    # Core types and engine
+    core/PanoramaTypes.h
+    core/CPanel2D.h
+    core/CPanel2D.cpp
+    core/CUIEngine.h
+    core/CUIEngine.cpp
+    core/GameEvents.h
+    core/GameEvents.cpp
     
-    # Stylesheet system
-    CStyleSheet.h
-    CStyleSheet.cpp
+    # Layout system
+    layout/CStyleSheet.h
+    layout/CStyleSheet.cpp
+    layout/CLayoutFile.h
+    layout/CLayoutFile.cpp
     
-    # Panel system
-    CPanel2D.h
-    CPanel2D.cpp
-    CPanelWidgets.cpp
+    # Widgets
+    widgets/CPanelWidgets.h
+    widgets/CPanelWidgets.cpp
+    widgets/CLabel.h
+    widgets/CLabel.cpp
+    widgets/CImage.h
+    widgets/CImage.cpp
+    widgets/CButton.h
+    widgets/CButton.cpp
+    widgets/CProgressBar.h
+    widgets/CProgressBar.cpp
+    widgets/CTextEntry.h
+    widgets/CTextEntry.cpp
+    widgets/CSlider.h
+    widgets/CSlider.cpp
+    widgets/CDropDown.h
+    widgets/CDropDown.cpp
     
-    # Layout parser
-    CLayoutFile.h
-    CLayoutFile.cpp
-
-    # Text system (decoupled from creation)
-    CUITextSystem.h
-    CUITextSystem.cpp
+    # Rendering system
+    rendering/CUIRenderer.h
+    rendering/CUIRenderer_DX12.cpp
+    rendering/CUITextSystem.h
+    rendering/CUITextSystem.cpp
+    rendering/FontAtlas.h
+    rendering/FontAtlas.cpp
     
-    # Event system
-    GameEvents.h
-    GameEvents.cpp
-    
-    # Font system
-    FontAtlas.h
-    FontAtlas.cpp
-    
-    # Renderer
-    CUIRenderer.h
-    CUIRenderer_DX12.cpp
-    
-    # Main engine
-    CUIEngine.h
-    CUIEngine.cpp
+    # HUD components
+    hud/CHUDManager.h
+    hud/CHUDManager.cpp
+    hud/HUDComponents.h
+    hud/HUDComponents.cpp
+    hud/CHeroUnitFrame.h
+    hud/CHeroUnitFrame.cpp
+    hud/CAbilityPanel.h
+    hud/CAbilityPanel.cpp
+    hud/CItemPanel.h
+    hud/CItemPanel.cpp
+    hud/CMinimap.h
+    hud/CMinimap.cpp
+    hud/CScoreboard.h
+    hud/CScoreboard.cpp
+    hud/CTooltip.h
+    hud/CTooltip.cpp
+    hud/CNotificationManager.h
+    hud/CNotificationManager.cpp
 )
 
 target_include_directories(panorama_ui PUBLIC

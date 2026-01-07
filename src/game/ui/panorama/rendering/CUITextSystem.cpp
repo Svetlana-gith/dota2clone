@@ -1,5 +1,8 @@
 #include "CUITextSystem.h"
-#include "CUIEngine.h"
+#include "../core/CUIEngine.h"
+#include "../widgets/CLabel.h"
+#include "../widgets/CButton.h"
+#include "../widgets/CTextEntry.h"
 
 namespace Panorama {
 

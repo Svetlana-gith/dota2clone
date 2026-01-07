@@ -113,6 +113,7 @@ public:
     void resetGame();
     
     bool isGameActive() const { return gameActive_; }
+    void setGameActive(bool active) { gameActive_ = active; }
     bool isPaused() const { return paused_; }
     
     f32 getTimeScale() const { return timeScale_; }

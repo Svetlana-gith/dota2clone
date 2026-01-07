@@ -179,6 +179,17 @@ WorldSnapshot ServerWorld::createSnapshot() const {
         }
     }
     
+    // Debug: log snapshot contents periodically
+    static int snapshotCount = 0;
+    if (++snapshotCount % 300 == 1) { // Every ~10 seconds at 30 tick rate
+        LOG_INFO("Snapshot: tick={}, entities={}", snapshot.tick, snapshot.entities.size());
+        for (const auto& e : snapshot.entities) {
+            LOG_INFO("  Entity: netId={}, type={}, owner={}, team={}, pos=({:.0f},{:.0f},{:.0f})", 
+                     e.networkId, e.entityType, e.ownerClientId, e.teamId,
+                     e.position.x, e.position.y, e.position.z);
+        }
+    }
+    
     return snapshot;
 }
 
@@ -207,8 +218,26 @@ EntitySnapshot ServerWorld::createEntitySnapshot(Entity entity) const {
         snapshot.maxHealth = health.maxHealth;
     }
     
-    // Team
-    if (entityManager_.hasComponent<ObjectComponent>(entity)) {
+    // Hero - check first as heroes are most important for multiplayer sync
+    if (entityManager_.hasComponent<HeroComponent>(entity)) {
+        const auto& hero = entityManager_.getComponent<HeroComponent>(entity);
+        snapshot.teamId = hero.teamId;
+        snapshot.health = hero.currentHealth;
+        snapshot.maxHealth = hero.maxHealth;
+        snapshot.mana = hero.currentMana;
+        snapshot.maxMana = hero.maxMana;
+        snapshot.entityType = 1; // Hero
+        
+        // Find owner client ID for this hero
+        for (const auto& [clientId, heroEntity] : clientToEntity_) {
+            if (heroEntity == entity) {
+                snapshot.ownerClientId = clientId;
+                break;
+            }
+        }
+    }
+    // Team from other components
+    else if (entityManager_.hasComponent<ObjectComponent>(entity)) {
         const auto& obj = entityManager_.getComponent<ObjectComponent>(entity);
         snapshot.teamId = obj.teamId;
     } else if (entityManager_.hasComponent<CreepComponent>(entity)) {
@@ -241,58 +270,71 @@ void ServerWorld::startGame() {
         spawnSystem->startGame();
     }
     
-    // Create player hero if not exists
-    if (auto* heroSystem = static_cast<HeroSystem*>(getSystem("HeroSystem"))) {
-        if (heroSystem->getPlayerHero() == INVALID_ENTITY) {
-            // Find Radiant base for spawn position
-            Vec3 playerSpawnPos(50.0f, 1.0f, 50.0f);
-            Vec3 enemySpawnPos(-50.0f, 1.0f, -50.0f);
-            
-            auto& registry = entityManager_.getRegistry();
-            auto baseView = registry.view<ObjectComponent, TransformComponent>();
-            for (auto entity : baseView) {
-                auto& obj = baseView.get<ObjectComponent>(entity);
-                auto& transform = baseView.get<TransformComponent>(entity);
-                if (obj.type == ObjectType::Base) {
-                    if (obj.teamId == 1) {
-                        playerSpawnPos = transform.position + Vec3(10.0f, 1.0f, 10.0f);
-                    } else if (obj.teamId == 2) {
-                        enemySpawnPos = transform.position + Vec3(-10.0f, 1.0f, -10.0f);
+    // Only create default heroes if no clients are connected (local/editor mode)
+    // In multiplayer, DedicatedServer creates heroes for each client before calling startGame()
+    if (clientToEntity_.empty()) {
+        if (auto* heroSystem = static_cast<HeroSystem*>(getSystem("HeroSystem"))) {
+            if (heroSystem->getPlayerHero() == INVALID_ENTITY) {
+                // Find Radiant base for spawn position
+                Vec3 playerSpawnPos(50.0f, 1.0f, 50.0f);
+                Vec3 enemySpawnPos(-50.0f, 1.0f, -50.0f);
+                
+                auto& registry = entityManager_.getRegistry();
+                auto baseView = registry.view<ObjectComponent, TransformComponent>();
+                for (auto entity : baseView) {
+                    auto& obj = baseView.get<ObjectComponent>(entity);
+                    auto& transform = baseView.get<TransformComponent>(entity);
+                    if (obj.type == ObjectType::Base) {
+                        if (obj.teamId == 1) {
+                            playerSpawnPos = transform.position + Vec3(10.0f, 1.0f, 10.0f);
+                        } else if (obj.teamId == 2) {
+                            enemySpawnPos = transform.position + Vec3(-10.0f, 1.0f, -10.0f);
+                        }
                     }
                 }
-            }
-            
-            // Create Warrior hero for player (Team 1 - Radiant)
-            Entity playerHero = heroSystem->createHeroByType("Warrior", 1, playerSpawnPos);
-            heroSystem->setPlayerHero(playerHero);
-            
-            // Give starting items
-            heroSystem->giveItem(playerHero, HeroSystem::createItem_Tango());
-            heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
-            heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
-            
-            // Learn first ability
-            heroSystem->learnAbility(playerHero, 0);
-            
-            LOG_INFO("Player hero created at ({}, {}, {})", playerSpawnPos.x, playerSpawnPos.y, playerSpawnPos.z);
-            
-            // Create enemy AI hero (Team 2 - Dire)
-            Entity enemyHero = heroSystem->createHeroByType("Mage", 2, enemySpawnPos);
-            
-            if (entityManager_.hasComponent<HeroComponent>(enemyHero)) {
-                auto& enemyComp = entityManager_.getComponent<HeroComponent>(enemyHero);
-                enemyComp.isPlayerControlled = false;
-                enemyComp.heroName = "Enemy Mage";
                 
-                heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
-                heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
+                // Create Warrior hero for player (Team 1 - Radiant)
+                Entity playerHero = heroSystem->createHeroByType("Warrior", 1, playerSpawnPos);
+                heroSystem->setPlayerHero(playerHero);
                 
-                heroSystem->learnAbility(enemyHero, 0);
-                heroSystem->learnAbility(enemyHero, 1);
+                // Assign network ID for multiplayer sync
+                assignNetworkId(playerHero);
+                
+                // Give starting items
+                heroSystem->giveItem(playerHero, HeroSystem::createItem_Tango());
+                heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
+                heroSystem->giveItem(playerHero, HeroSystem::createItem_IronBranch());
+                
+                // Learn first ability
+                heroSystem->learnAbility(playerHero, 0);
+                
+                LOG_INFO("Player hero created at ({}, {}, {}) with networkId={}", 
+                         playerSpawnPos.x, playerSpawnPos.y, playerSpawnPos.z, getNetworkId(playerHero));
+                
+                // Create enemy AI hero (Team 2 - Dire)
+                Entity enemyHero = heroSystem->createHeroByType("Mage", 2, enemySpawnPos);
+                
+                // Assign network ID for multiplayer sync
+                assignNetworkId(enemyHero);
+                
+                if (entityManager_.hasComponent<HeroComponent>(enemyHero)) {
+                    auto& enemyComp = entityManager_.getComponent<HeroComponent>(enemyHero);
+                    enemyComp.isPlayerControlled = false;
+                    enemyComp.heroName = "Enemy Mage";
+                    
+                    heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
+                    heroSystem->giveItem(enemyHero, HeroSystem::createItem_IronBranch());
+                    
+                    heroSystem->learnAbility(enemyHero, 0);
+                    heroSystem->learnAbility(enemyHero, 1);
+                }
+                
+                LOG_INFO("Enemy AI hero created at ({}, {}, {}) with networkId={}", 
+                         enemySpawnPos.x, enemySpawnPos.y, enemySpawnPos.z, getNetworkId(enemyHero));
             }
-            
-            LOG_INFO("Enemy AI hero created at ({}, {}, {})", enemySpawnPos.x, enemySpawnPos.y, enemySpawnPos.z);
         }
+    } else {
+        LOG_INFO("Multiplayer mode: {} client heroes already spawned", clientToEntity_.size());
     }
 }
 
@@ -318,8 +360,13 @@ void ServerWorld::resetGame() {
 }
 
 void ServerWorld::addClient(ClientId clientId) {
-    // Create hero for client (placeholder)
-    // TODO: Proper hero creation
+    // Client added - hero will be created by DedicatedServer::spawnHeroesForClients()
+    LOG_INFO("Client {} added to server world", clientId);
+}
+
+void ServerWorld::setClientHero(ClientId clientId, Entity heroEntity) {
+    clientToEntity_[clientId] = heroEntity;
+    LOG_INFO("Client {} mapped to hero entity {}", clientId, static_cast<u32>(heroEntity));
 }
 
 void ServerWorld::removeClient(ClientId clientId) {

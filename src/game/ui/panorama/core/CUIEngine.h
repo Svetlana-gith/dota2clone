@@ -6,11 +6,12 @@
 
 #include "PanoramaTypes.h"
 #include "CPanel2D.h"
-#include "CUIRenderer.h"
-#include "CStyleSheet.h"
-#include "CLayoutFile.h"
+#include "../rendering/CUIRenderer.h"
+#include "../layout/CStyleSheet.h"
+#include "../layout/CLayoutFile.h"
 #include "GameEvents.h"
 #include <memory>
+#include <functional>
 
 // Forward declarations
 class DirectXRenderer;
@@ -75,6 +76,7 @@ public:
     void SetFocus(CPanel2D* panel);
     void ClearFocus();
     void ClearAllInputState();  // Clear focus, hover, pressed - call before destroying UI
+    void ClearInputStateForSubtree(CPanel2D* subtreeRoot); // Clear only if pointers are within subtreeRoot
     
     // ============ Update & Render ============
     void Update(f32 deltaTime);
@@ -103,6 +105,11 @@ public:
     void SetDebugMode(bool enabled) { m_config.debugMode = enabled; }
     bool IsDebugMode() const { return m_config.debugMode; }
     void DrawDebugInfo();
+
+    // ============ Custom Rendering Hook ============
+    // Optional hook to allow game code to inject additional immediate-mode UI rendering
+    // into the Panorama UI pass (after layout, with render target already bound).
+    void SetCustomRenderCallback(std::function<void(CUIRenderer*)> callback) { m_customRenderCallback = std::move(callback); }
     
     // ============ Localization ============
     void SetLanguage(const std::string& language);
@@ -144,6 +151,9 @@ private:
     CPanel2D* FindPanelAtPoint(CPanel2D* root, f32 x, f32 y);
     void UpdatePanelRecursive(CPanel2D* panel, f32 deltaTime);
     void RenderPanelRecursive(CPanel2D* panel);
+
+    // Custom UI render callback (executed during Render()).
+    std::function<void(CUIRenderer*)> m_customRenderCallback;
 };
 
 // ============ Convenience Functions (Valve-style $ API) ============

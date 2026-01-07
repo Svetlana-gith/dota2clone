@@ -165,7 +165,8 @@ if(NOT TARGET imgui)
         ${imgui_docking_SOURCE_DIR}/imgui_tables.cpp
         ${imgui_docking_SOURCE_DIR}/imgui_widgets.cpp
         ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-        ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
+        # PATCHED: Use local copy with GPU sync fix for buffer resizing
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/imgui_impl_dx12_patched.cpp
     )
 
     target_include_directories(imgui

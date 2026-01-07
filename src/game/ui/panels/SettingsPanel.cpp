@@ -4,12 +4,12 @@
 
 namespace Game {
 
-static const Panorama::Color COL_BG_DARK(0.02f, 0.04f, 0.08f, 0.95f);
-static const Panorama::Color COL_PANEL(0.08f, 0.09f, 0.12f, 0.98f);
+static const Panorama::Color COL_BG_DARK(0.02f, 0.04f, 0.08f, 1.0f);
+static const Panorama::Color COL_PANEL(0.08f, 0.09f, 0.12f, 1.0f);
 static const Panorama::Color COL_HEADER(0.05f, 0.06f, 0.08f, 1.0f);
 static const Panorama::Color COL_TAB_ACTIVE(0.2f, 0.22f, 0.28f, 1.0f);
 static const Panorama::Color COL_TAB_INACTIVE(0.12f, 0.13f, 0.16f, 1.0f);
-static const Panorama::Color COL_SECTION(0.06f, 0.07f, 0.09f, 0.8f);
+static const Panorama::Color COL_SECTION(0.06f, 0.07f, 0.09f, 1.0f);
 static const Panorama::Color COL_LABEL(0.7f, 0.7f, 0.7f, 1.0f);
 static const Panorama::Color COL_VALUE(0.9f, 0.9f, 0.9f, 1.0f);
 static const Panorama::Color COL_GREEN(0.18f, 0.45f, 0.18f, 1.0f);
@@ -31,7 +31,9 @@ void SettingsPanel::Create(Panorama::CPanel2D* parent, f32 screenWidth, f32 scre
     m_overlay = std::make_shared<Panorama::CPanel2D>("SettingsOverlay");
     m_overlay->GetStyle().width = Panorama::Length::Fill();
     m_overlay->GetStyle().height = Panorama::Length::Fill();
-    m_overlay->GetStyle().backgroundColor = Panorama::Color(0.0f, 0.0f, 0.0f, 0.75f);
+    // Modal dimming overlay (separate from the window itself).
+    // If you want a "hard" modal background, use alpha = 1.0f here.
+    m_overlay->GetStyle().backgroundColor = Panorama::Color(0.0f, 0.0f, 0.0f, 0.85f);
     m_overlay->SetVisible(false);
     parent->AddChild(m_overlay);
     

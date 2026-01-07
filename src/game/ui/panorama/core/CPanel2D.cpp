@@ -1,6 +1,6 @@
 #include "CPanel2D.h"
-#include "CUIRenderer.h"
-#include "CStyleSheet.h"
+#include "../rendering/CUIRenderer.h"
+#include "../layout/CStyleSheet.h"
 #include "CUIEngine.h"
 #include <algorithm>
 
@@ -54,6 +54,16 @@ const std::string& CPanel2D::GetPanelTypeName() const {
     if (it != s_panelTypeNames.end()) return it->second;
     static std::string unknown = "Unknown";
     return unknown;
+}
+
+bool CPanel2D::IsDescendantOf(const CPanel2D* ancestor) const {
+    if (!ancestor) return false;
+    const CPanel2D* p = this;
+    while (p) {
+        if (p == ancestor) return true;
+        p = p->m_parent;
+    }
+    return false;
 }
 
 // ============ Hierarchy ============
@@ -460,6 +470,9 @@ void CPanel2D::SetEnabled(bool enabled) {
 }
 
 void CPanel2D::SetFocus() {
+    auto self = weak_from_this().lock();
+    (void)self;
+
     m_focused = true;
     PanelEvent event;
     event.type = PanelEventType::OnFocus;
@@ -468,6 +481,9 @@ void CPanel2D::SetFocus() {
 }
 
 void CPanel2D::RemoveFocus() {
+    auto self = weak_from_this().lock();
+    (void)self;
+
     m_focused = false;
     PanelEvent event;
     event.type = PanelEventType::OnBlur;
@@ -486,11 +502,18 @@ void CPanel2D::RemoveEventHandler(PanelEventType type) {
 }
 
 void CPanel2D::DispatchEvent(PanelEvent& event) {
+    // Keep this panel alive while dispatching; handlers may remove this panel from the tree
+    // (dropping the last shared_ptr) and otherwise make `this` dangling mid-dispatch.
+    auto self = weak_from_this().lock();
+    (void)self;
+
     event.currentTarget = this;
     
     auto it = m_eventHandlers.find(event.type);
     if (it != m_eventHandlers.end()) {
-        for (auto& handler : it->second) {
+        // Copy handlers to avoid iterator invalidation if handlers mutate m_eventHandlers.
+        auto handlers = it->second;
+        for (auto& handler : handlers) {
             handler(event);
             if (!event.bubbles) return;
         }
@@ -498,6 +521,9 @@ void CPanel2D::DispatchEvent(PanelEvent& event) {
 }
 
 void CPanel2D::DispatchEventUp(PanelEvent& event) {
+    auto self = weak_from_this().lock();
+    (void)self;
+
     DispatchEvent(event);
     if (event.bubbles && m_parent) {
         m_parent->DispatchEventUp(event);
@@ -731,6 +757,13 @@ bool CPanel2D::OnMouseMove(f32 x, f32 y) {
 
 bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
     if (!m_enabled || !m_visible) return false;
+
+    // Keep this panel alive for the duration of input dispatch.
+    // Event handlers may remove panels from the tree (dropping last shared_ptr),
+    // which would otherwise make `this` dangling while we are still on the stack.
+    // Use weak_from_this() to avoid exceptions from shared_from_this().
+    auto self = weak_from_this().lock();
+    (void)self;
     
     // Debug: log entry with depth tracking
     static thread_local int s_mouseDownDepth = 0;
@@ -762,6 +795,12 @@ bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
     
     if (IsPointInPanel(x, y) && m_acceptsInput) {
         m_pressed = true;
+
+        // Debug: log the final hit target for mouse down (high signal; only logs for the handled panel).
+        const char* parentId = (m_parent ? m_parent->GetID().c_str() : "<null>");
+        LOG_INFO("MouseDown HIT id='{}' type='{}' this={} parent='{}' depth={} pos=({:.0f},{:.0f})",
+            m_id, GetPanelTypeName(), static_cast<const void*>(this), parentId, s_mouseDownDepth, x, y);
+        spdlog::default_logger()->flush();
         
         // Set focus via CUIEngine so it tracks the focused panel
         Panorama::CUIEngine::Instance().SetFocus(this);
@@ -781,6 +820,10 @@ bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
 }
 
 bool CPanel2D::OnMouseUp(f32 x, f32 y, i32 button) {
+    // Keep this panel alive for the duration of input dispatch; see OnMouseDown().
+    auto self = weak_from_this().lock();
+    (void)self;
+
     bool wasPressed = m_pressed;
     m_pressed = false;
     

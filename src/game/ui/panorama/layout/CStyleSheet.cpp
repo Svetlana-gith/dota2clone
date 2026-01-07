@@ -1,5 +1,5 @@
 #include "CStyleSheet.h"
-#include "CPanel2D.h"
+#include "../core/CPanel2D.h"
 #include <sstream>
 #include <algorithm>
 #include <cctype>

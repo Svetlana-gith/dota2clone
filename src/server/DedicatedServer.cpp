@@ -4,6 +4,8 @@
 #include "network/NetworkCommon.h"
 #include "network/MatchmakingTypes.h"
 #include "network/MatchmakingProtocol.h"
+#include "world/HeroSystem.h"
+#include "world/Components.h"
 #include "core/Timer.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -64,6 +66,11 @@ public:
         serverWorld_ = std::make_unique<ServerWorld>();
         LOG_INFO("Server world created");
         
+        // Initialize game systems
+        auto& entityManager = serverWorld_->getEntityManager();
+        serverWorld_->addSystem(std::make_unique<HeroSystem>(entityManager));
+        LOG_INFO("HeroSystem added to server world");
+        
         // Create network server
         networkServer_ = std::make_unique<NetworkServer>();
         
@@ -78,6 +85,15 @@ public:
         
         networkServer_->setOnClientInput([this](ClientId clientId, const PlayerInput& input) {
             onClientInput(clientId, input);
+        });
+        
+        // Handle hero picks - store hero name for each client
+        networkServer_->setOnHeroPick([this](ClientId clientId, const std::string& heroName, u8 teamSlot) {
+            auto it = clients_.find(clientId);
+            if (it != clients_.end()) {
+                it->second.heroName = heroName;
+                LOG_INFO("Client {} picked hero '{}' (team slot {})", clientId, heroName, teamSlot);
+            }
         });
         
         // Start game when all heroes are picked (with delay)
@@ -174,6 +190,10 @@ public:
                 gameStartDelay_ -= deltaTime;
                 if (gameStartDelay_ <= 0.0f) {
                     LOG_INFO("Game start delay expired, starting game!");
+                    
+                    // Create heroes for all connected clients
+                    spawnHeroesForClients();
+                    
                     serverWorld_->startGame();
                     gameStarted_ = true;
                     gameStartDelay_ = 0.0f;
@@ -224,6 +244,7 @@ private:
         // Get username and accountId from NetworkServer
         std::string username = networkServer_->getClientUsername(clientId);
         u64 accountId = networkServer_->getClientAccountId(clientId);
+        u8 teamSlot = networkServer_->getClientTeamSlot(clientId);
         if (username.empty()) {
             username = "Player" + std::to_string(clientId);
         }
@@ -233,11 +254,12 @@ private:
         info.clientId = clientId;
         info.accountId = accountId;
         info.username = username;
-        info.teamSlot = static_cast<u8>(clients_.size());  // Assign slot based on join order
+        info.teamSlot = teamSlot;  // Use slot from NetworkServer
         info.isConnected = true;
         clients_[clientId] = info;
         
-        LOG_INFO(">>> Player '{}' connected (slot {}, accountId={})", username, info.teamSlot, accountId);
+        LOG_INFO(">>> Player '{}' connected (slot {}, team {}, accountId={})", 
+                 username, info.teamSlot, (info.teamSlot < 5 ? "Radiant" : "Dire"), accountId);
         
         // Add client to server world
         serverWorld_->addClient(clientId);
@@ -314,6 +336,72 @@ private:
             gameEnded_ = true;
             gameEndTimer_ = 10.0f;  // Give time for remaining players to see result
         }
+    }
+    
+    void spawnHeroesForClients() {
+        LOG_INFO("Spawning heroes for {} clients...", clients_.size());
+        
+        auto* heroSystem = static_cast<WorldEditor::HeroSystem*>(serverWorld_->getSystem("HeroSystem"));
+        if (!heroSystem) {
+            LOG_ERROR("HeroSystem not found!");
+            return;
+        }
+        
+        // Map size: 16000x16000 units
+        // Radiant base: bottom-left (~1500, 1500)
+        // Dire base: top-right (~14500, 14500)
+        const Vec3 radiantSpawn(1600.0f, 50.0f, 1600.0f);
+        const Vec3 direSpawn(14400.0f, 50.0f, 14400.0f);
+        const f32 spawnSpread = 200.0f;  // Spread heroes apart
+        
+        int radiantIndex = 0;
+        int direIndex = 0;
+        
+        for (auto& [clientId, clientInfo] : clients_) {
+            if (!clientInfo.isConnected) continue;
+            
+            // Get current team slot from NetworkServer (it's assigned during hero pick phase)
+            u8 teamSlot = networkServer_->getClientTeamSlot(clientId);
+            clientInfo.teamSlot = teamSlot;  // Update our cached value
+            
+            // Determine team based on slot (0-4 = Radiant/Team 1, 5-9 = Dire/Team 2)
+            i32 teamId = (teamSlot < 5) ? 1 : 2;
+            
+            // Calculate spawn position with spread
+            Vec3 spawnPos;
+            if (teamId == 1) {
+                spawnPos = radiantSpawn + Vec3(radiantIndex * spawnSpread, 0.0f, radiantIndex * spawnSpread * 0.5f);
+                radiantIndex++;
+            } else {
+                spawnPos = direSpawn - Vec3(direIndex * spawnSpread, 0.0f, direIndex * spawnSpread * 0.5f);
+                direIndex++;
+            }
+            
+            // Use picked hero or default to Warrior
+            std::string heroType = clientInfo.heroName.empty() ? "Warrior" : clientInfo.heroName;
+            
+            // Create hero
+            Entity heroEntity = heroSystem->createHeroByType(heroType, teamId, spawnPos);
+            
+            // Assign network ID for multiplayer sync
+            NetworkId netId = serverWorld_->assignNetworkId(heroEntity);
+            
+            // Map client to their hero entity in ServerWorld
+            serverWorld_->setClientHero(clientId, heroEntity);
+            clientToEntity_[clientId] = heroEntity;
+            
+            // Mark as player controlled
+            if (serverWorld_->hasComponent<WorldEditor::HeroComponent>(heroEntity)) {
+                auto& hero = serverWorld_->getComponent<WorldEditor::HeroComponent>(heroEntity);
+                hero.isPlayerControlled = true;
+                hero.heroName = clientInfo.username + "'s " + heroType;
+            }
+            
+            LOG_INFO("Spawned hero '{}' for client {} (slot={}, team {}) at ({}, {}, {}) networkId={}", 
+                     heroType, clientId, teamSlot, teamId, spawnPos.x, spawnPos.y, spawnPos.z, netId);
+        }
+        
+        LOG_INFO("All heroes spawned: {} Radiant, {} Dire", radiantIndex, direIndex);
     }
     
     void calculateGameResult() {
@@ -443,6 +531,7 @@ private:
     
     // Client tracking
     std::unordered_map<ClientId, ClientInfo> clients_;
+    std::unordered_map<ClientId, Entity> clientToEntity_;  // Client -> controlled hero entity
 };
 
 // ============ Main Entry Point ============

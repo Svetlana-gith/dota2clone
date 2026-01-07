@@ -5,8 +5,8 @@
  * Uses DirectX 12 command lists for rendering
  */
 
-#include "PanoramaTypes.h"
-#include "CStyleSheet.h"
+#include "../core/PanoramaTypes.h"
+#include "../layout/CStyleSheet.h"
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
@@ -205,10 +205,10 @@ private:
     std::vector<UIVertex> m_textVertices; // Separate batch for text
     std::vector<uint16_t> m_indices;
 
-    // Text upload cursor (in vertices) within the per-frame dynamic vertex buffer.
-    // We use the second half of the buffer for text. Multiple text flushes can occur per frame
-    // (e.g. different font sizes); this cursor prevents overwriting earlier batches before GPU executes.
-    size_t m_textUploadCursorVertices = 0;
+    // Upload cursor (in vertices) within the per-frame dynamic vertex buffer.
+    // We can flush multiple times per frame (to preserve draw order and handle state/texture changes).
+    // Each flush must use a unique offset to avoid overwriting data referenced by earlier draw calls.
+    size_t m_uploadCursorVertices = 0;
     
     // Texture cache
     std::unordered_map<std::string, void*> m_textureCache;

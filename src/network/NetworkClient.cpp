@@ -224,13 +224,24 @@ void NetworkClient::handleConnectionRejected() {
 void NetworkClient::handleWorldSnapshot(const u8* data, size_t size) {
     if (state_ != ConnectionState::Connected) return;
     
-    if (size < sizeof(WorldSnapshot)) {
-        LOG_WARN("Invalid snapshot size");
+    if (size < sizeof(SnapshotHeader)) {
+        LOG_WARN("Invalid snapshot size: {} < {}", size, sizeof(SnapshotHeader));
         return;
     }
     
-    memcpy(&latestSnapshot_, data, sizeof(WorldSnapshot));
+    if (!latestSnapshot_.deserialize(data, size)) {
+        LOG_WARN("Failed to deserialize snapshot");
+        return;
+    }
+    
     hasNewSnapshot_ = true;
+    
+    // Debug: log received snapshots periodically
+    static int recvCount = 0;
+    if (++recvCount % 300 == 1) {
+        LOG_INFO("Client received snapshot: tick={}, entities={}", 
+                 latestSnapshot_.tick, latestSnapshot_.entities.size());
+    }
 }
 
 void NetworkClient::sendInput(const PlayerInput& input) {

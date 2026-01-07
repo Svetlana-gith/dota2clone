@@ -3,20 +3,35 @@
  * 
  * Displays login/registration UI and handles authentication flow.
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5
+ * 
+ * Keyboard shortcuts:
+ *   Tab       - Next input field
+ *   Shift+Tab - Previous input field  
+ *   Enter     - Submit form (login/register)
+ *   Escape    - Clear error / switch to login mode
  */
 
 #include "../GameState.h"
 #include "../DebugConsole.h"
-#include "../ui/panorama/CUIEngine.h"
-#include "../ui/panorama/CPanel2D.h"
-#include "../ui/panorama/CStyleSheet.h"
-#include "auth/AuthClient.h"
+#include "../ui/panorama/core/CUIEngine.h"
+#include "../ui/panorama/core/CPanel2D.h"
+#include "../ui/panorama/widgets/CLabel.h"
+#include "../ui/panorama/widgets/CButton.h"
+#include "../ui/panorama/widgets/CTextEntry.h"
+#include "../ui/panorama/layout/CStyleSheet.h"
+#include "../../auth/AuthClient.h"
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 namespace Game {
 
 struct LoginState::LoginUI {
     std::shared_ptr<Panorama::CPanel2D> root;
+    std::shared_ptr<Panorama::CPanel2D> centerContainer;  // For vertical centering
     std::shared_ptr<Panorama::CPanel2D> loginBox;
+    std::shared_ptr<Panorama::CPanel2D> formContainer;    // Flow layout for form fields
     
     // Login form
     std::shared_ptr<Panorama::CLabel> titleLabel;
@@ -24,17 +39,21 @@ struct LoginState::LoginUI {
     std::shared_ptr<Panorama::CTextEntry> passwordInput;
     std::shared_ptr<Panorama::CTextEntry> confirmPasswordInput;  // For registration
     std::shared_ptr<Panorama::CButton> loginButton;
-    std::shared_ptr<Panorama::CButton> registerButton;
     std::shared_ptr<Panorama::CButton> guestButton;
     std::shared_ptr<Panorama::CButton> switchModeButton;
     
+    // Button row container
+    std::shared_ptr<Panorama::CPanel2D> buttonRow;
+    
     // Status
     std::shared_ptr<Panorama::CLabel> errorLabel;
-    std::shared_ptr<Panorama::CLabel> statusLabel;
     
     // Loading indicator
     std::shared_ptr<Panorama::CPanel2D> loadingOverlay;
     std::shared_ptr<Panorama::CLabel> loadingLabel;
+    
+    // Focusable elements for Tab navigation
+    std::vector<std::shared_ptr<Panorama::CPanel2D>> focusOrder;
 };
 
 LoginState::LoginState() 
@@ -48,8 +67,8 @@ LoginState::~LoginState() = default;
 void LoginState::OnEnter() {
     LOG_INFO("LoginState::OnEnter()");
     
-    // Load base stylesheet for login screen
-    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/base.css");
+    // Load login stylesheet (includes base.css)
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login.css");
     
     CreateUI();
     SetupAuthCallbacks();
@@ -85,27 +104,6 @@ void LoginState::Render() {
     Panorama::CUIEngine::Instance().Render();
 }
 
-// Scaled helper for layout (not fonts)
-static float S(float v) { return v * 1.35f; }
-
-static std::shared_ptr<Panorama::CPanel2D> P(const std::string& id, float w, float h, Panorama::Color bg) {
-    auto p = std::make_shared<Panorama::CPanel2D>(id);
-    if (w > 0) p->GetStyle().width = Panorama::Length::Px(S(w));
-    else p->GetStyle().width = Panorama::Length::Fill();
-    if (h > 0) p->GetStyle().height = Panorama::Length::Px(S(h));
-    else p->GetStyle().height = Panorama::Length::Fill();
-    p->GetStyle().backgroundColor = bg;
-    return p;
-}
-
-// Label helper using CSS classes for font sizes
-static std::shared_ptr<Panorama::CLabel> L(const std::string& text, const std::string& sizeClass, Panorama::Color col) {
-    auto l = std::make_shared<Panorama::CLabel>(text, text);
-    l->AddClass(sizeClass);  // Use CSS class for font size
-    l->GetStyle().color = col;
-    return l;
-}
-
 void LoginState::CreateUI() {
     auto& engine = Panorama::CUIEngine::Instance();
     auto* uiRoot = engine.GetRoot();
@@ -114,138 +112,96 @@ void LoginState::CreateUI() {
     float sw = engine.GetScreenWidth();
     float sh = engine.GetScreenHeight();
     
-    // Colors - same as MainMenuState
-    Panorama::Color bg(0.02f, 0.04f, 0.08f, 1.0f);
-    Panorama::Color panel(0.08f, 0.09f, 0.11f, 0.95f);
-    Panorama::Color inputBg(0.12f, 0.13f, 0.15f, 1.0f);
-    Panorama::Color greenBtn(0.18f, 0.45f, 0.18f, 1.0f);
-    Panorama::Color blueBtn(0.18f, 0.35f, 0.55f, 1.0f);
-    Panorama::Color grayBtn(0.25f, 0.25f, 0.28f, 1.0f);
-    Panorama::Color white(1.0f, 1.0f, 1.0f, 1.0f);
-    Panorama::Color gray(0.6f, 0.6f, 0.6f, 1.0f);
-    Panorama::Color red(0.85f, 0.25f, 0.25f, 1.0f);
-    Panorama::Color none(0, 0, 0, 0);
+    // Clear focus order
+    m_ui->focusOrder.clear();
     
-    // ROOT - full screen background
-    m_ui->root = P("LoginRoot", 0, 0, bg);
+    // Box dimensions (from CSS: 513px width, 32px padding each side = 449px input width)
+    float boxW = 513.0f;
+    float inputW = 449.0f;
+    
+    // ROOT - full screen background (styled by #LoginRoot in CSS)
+    m_ui->root = std::make_shared<Panorama::CPanel2D>("LoginRoot");
     uiRoot->AddChild(m_ui->root);
     
-    // Title at top
-    auto title = L("WORLD EDITOR", "title", white);
-    title->GetStyle().marginLeft = Panorama::Length::Px((sw - S(200)) / 2);
-    title->GetStyle().marginTop = Panorama::Length::Px(sh * 0.15f);
+    // Title at top center
+    auto title = std::make_shared<Panorama::CLabel>("WORLD EDITOR", "GameTitle");
+    title->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - 200.0f) / 2));
+    title->GetStyle().marginTop = Panorama::Length::Px(std::round(sh * 0.10f));
     m_ui->root->AddChild(title);
     
-    // Login box (centered)
-    float boxW = 380;
-    float boxH = m_isRegistering ? 400 : 322;
-    m_ui->loginBox = P("LoginBox", boxW, boxH, panel);
-    m_ui->loginBox->GetStyle().borderRadius = S(6);
-    m_ui->loginBox->GetStyle().marginLeft = Panorama::Length::Px((sw - S(boxW)) / 2);
-    m_ui->loginBox->GetStyle().marginTop = Panorama::Length::Px(sh * 0.3f);
+    // Login box - centered (styled by #LoginBox in CSS)
+    m_ui->loginBox = std::make_shared<Panorama::CPanel2D>("LoginBox");
+    m_ui->loginBox->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - boxW) / 2));
+    m_ui->loginBox->GetStyle().marginTop = Panorama::Length::Px(std::round(sh * 0.22f));
     m_ui->root->AddChild(m_ui->loginBox);
     
     // Title label inside box
     std::string titleText = m_isRegistering ? "CREATE ACCOUNT" : "LOGIN";
-    m_ui->titleLabel = L(titleText, "heading", white);
-    m_ui->titleLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->titleLabel->GetStyle().marginTop = Panorama::Length::Px(S(20));
+    m_ui->titleLabel = std::make_shared<Panorama::CLabel>(titleText, "FormTitle");
     m_ui->loginBox->AddChild(m_ui->titleLabel);
     
     // Username label
-    auto usernameLabel = L("Username", "heading", gray);
-    usernameLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    usernameLabel->GetStyle().marginTop = Panorama::Length::Px(S(55));
+    auto usernameLabel = std::make_shared<Panorama::CLabel>("Username", "UsernameLabel");
+    usernameLabel->AddClass("FieldLabel");
     m_ui->loginBox->AddChild(usernameLabel);
     
     // Username input
     m_ui->usernameInput = std::make_shared<Panorama::CTextEntry>("UsernameInput");
-    m_ui->usernameInput->GetStyle().width = Panorama::Length::Px(S(340));
-    m_ui->usernameInput->GetStyle().height = Panorama::Length::Px(S(32));
-    m_ui->usernameInput->GetStyle().backgroundColor = inputBg;
-    m_ui->usernameInput->GetStyle().borderRadius = S(4);
-    m_ui->usernameInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->usernameInput->GetStyle().marginTop = Panorama::Length::Px(S(92));
-    m_ui->usernameInput->AddClass("heading");  // CSS class for font size
-    m_ui->usernameInput->GetStyle().color = white;
+    m_ui->usernameInput->AddClass("LoginInput");
     m_ui->usernameInput->SetText(m_username);
+    m_ui->usernameInput->SetPlaceholder("Enter username");
     m_ui->usernameInput->SetOnTextChanged([this](const std::string& text) {
         m_username = text;
         ClearError();
     });
     m_ui->loginBox->AddChild(m_ui->usernameInput);
+    m_ui->focusOrder.push_back(m_ui->usernameInput);
     
     // Password label
-    auto passwordLabel = L("Password", "caption", gray);
-    passwordLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    passwordLabel->GetStyle().marginTop = Panorama::Length::Px(S(127));
+    auto passwordLabel = std::make_shared<Panorama::CLabel>("Password", "PasswordLabel");
+    passwordLabel->AddClass("FieldLabelSpaced");
     m_ui->loginBox->AddChild(passwordLabel);
     
     // Password input
     m_ui->passwordInput = std::make_shared<Panorama::CTextEntry>("PasswordInput");
-    m_ui->passwordInput->GetStyle().width = Panorama::Length::Px(S(340));
-    m_ui->passwordInput->GetStyle().height = Panorama::Length::Px(S(32));
-    m_ui->passwordInput->GetStyle().backgroundColor = inputBg;
-    m_ui->passwordInput->GetStyle().borderRadius = S(4);
-    m_ui->passwordInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->passwordInput->GetStyle().marginTop = Panorama::Length::Px(S(164));
-    m_ui->passwordInput->AddClass("body");  // CSS class for font size
-    m_ui->passwordInput->GetStyle().color = white;
-    m_ui->passwordInput->SetPasswordMode(true);
+    m_ui->passwordInput->AddClass("LoginInput");
+    m_ui->passwordInput->SetPassword(true);
     m_ui->passwordInput->SetText(m_password);
+    m_ui->passwordInput->SetPlaceholder("Enter password");
     m_ui->passwordInput->SetOnTextChanged([this](const std::string& text) {
         m_password = text;
         ClearError();
     });
     m_ui->loginBox->AddChild(m_ui->passwordInput);
-    
-    float buttonY = 201;
+    m_ui->focusOrder.push_back(m_ui->passwordInput);
     
     // Confirm password (registration only)
     if (m_isRegistering) {
-        auto confirmLabel = L("Confirm Password", "caption", gray);
-        confirmLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-        confirmLabel->GetStyle().marginTop = Panorama::Length::Px(S(201));
+        auto confirmLabel = std::make_shared<Panorama::CLabel>("Confirm Password", "ConfirmLabel");
+        confirmLabel->AddClass("FieldLabelSpaced");
         m_ui->loginBox->AddChild(confirmLabel);
         
         m_ui->confirmPasswordInput = std::make_shared<Panorama::CTextEntry>("ConfirmPasswordInput");
-        m_ui->confirmPasswordInput->GetStyle().width = Panorama::Length::Px(S(340));
-        m_ui->confirmPasswordInput->GetStyle().height = Panorama::Length::Px(S(32));
-        m_ui->confirmPasswordInput->GetStyle().backgroundColor = inputBg;
-        m_ui->confirmPasswordInput->GetStyle().borderRadius = S(4);
-        m_ui->confirmPasswordInput->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-        m_ui->confirmPasswordInput->GetStyle().marginTop = Panorama::Length::Px(S(238));
-        m_ui->confirmPasswordInput->AddClass("body");  // CSS class for font size
-        m_ui->confirmPasswordInput->GetStyle().color = white;
-        m_ui->confirmPasswordInput->SetPasswordMode(true);
+        m_ui->confirmPasswordInput->AddClass("LoginInput");
+        m_ui->confirmPasswordInput->SetPassword(true);
         m_ui->confirmPasswordInput->SetText(m_confirmPassword);
+        m_ui->confirmPasswordInput->SetPlaceholder("Confirm password");
         m_ui->confirmPasswordInput->SetOnTextChanged([this](const std::string& text) {
             m_confirmPassword = text;
             ClearError();
         });
         m_ui->loginBox->AddChild(m_ui->confirmPasswordInput);
-        
-        buttonY = 238;
+        m_ui->focusOrder.push_back(m_ui->confirmPasswordInput);
     }
     
-    // Error label
-    m_ui->errorLabel = L("", "caption", red);
-    m_ui->errorLabel->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->errorLabel->GetStyle().marginTop = Panorama::Length::Px(S(buttonY - 18));
+    // Error label (styled by #ErrorLabel in CSS)
+    m_ui->errorLabel = std::make_shared<Panorama::CLabel>("", "ErrorLabel");
     m_ui->errorLabel->SetVisible(false);
     m_ui->loginBox->AddChild(m_ui->errorLabel);
     
-    // Login/Register button
+    // Primary action button (styled by #LoginBtn in CSS)
     std::string btnText = m_isRegistering ? "CREATE ACCOUNT" : "LOGIN";
     m_ui->loginButton = std::make_shared<Panorama::CButton>(btnText, "LoginBtn");
-    m_ui->loginButton->GetStyle().width = Panorama::Length::Px(S(340));
-    m_ui->loginButton->GetStyle().height = Panorama::Length::Px(S(36));
-    m_ui->loginButton->GetStyle().backgroundColor = greenBtn;
-    m_ui->loginButton->GetStyle().borderRadius = S(4);
-    m_ui->loginButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->loginButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 44));
-    m_ui->loginButton->AddClass("body");  // CSS class for font size (14px)
-    m_ui->loginButton->GetStyle().color = white;
     m_ui->loginButton->SetOnActivate([this]() {
         if (m_isRegistering) {
             OnRegisterClicked();
@@ -254,56 +210,56 @@ void LoginState::CreateUI() {
         }
     });
     m_ui->loginBox->AddChild(m_ui->loginButton);
+    m_ui->focusOrder.push_back(m_ui->loginButton);
     
-    // Switch mode button
+    // Button row (styled by #ButtonRow in CSS)
+    m_ui->buttonRow = std::make_shared<Panorama::CPanel2D>("ButtonRow");
+    m_ui->loginBox->AddChild(m_ui->buttonRow);
+    
+    // Switch mode button (styled by #SwitchBtn in CSS)
     std::string switchText = m_isRegistering ? "Back to Login" : "Create Account";
     m_ui->switchModeButton = std::make_shared<Panorama::CButton>(switchText, "SwitchBtn");
-    m_ui->switchModeButton->GetStyle().width = Panorama::Length::Px(S(165));
-    m_ui->switchModeButton->GetStyle().height = Panorama::Length::Px(S(30));
-    m_ui->switchModeButton->GetStyle().backgroundColor = blueBtn;
-    m_ui->switchModeButton->GetStyle().borderRadius = S(4);
-    m_ui->switchModeButton->GetStyle().marginLeft = Panorama::Length::Px(S(20));
-    m_ui->switchModeButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 75));
-    m_ui->switchModeButton->AddClass("btn-sm");  // CSS class for small button (12px)
-    m_ui->switchModeButton->GetStyle().color = white;
     m_ui->switchModeButton->SetOnActivate([this]() {
         m_isRegistering = !m_isRegistering;
         ClearError();
-        // Defer UI rebuild to next frame to avoid destroying UI from within callback
         m_needsUIRebuild = true;
     });
-    m_ui->loginBox->AddChild(m_ui->switchModeButton);
+    m_ui->buttonRow->AddChild(m_ui->switchModeButton);
+    m_ui->focusOrder.push_back(m_ui->switchModeButton);
     
-    // Guest button
+    // Guest button (styled by #GuestBtn in CSS)
     m_ui->guestButton = std::make_shared<Panorama::CButton>("Play as Guest", "GuestBtn");
-    m_ui->guestButton->GetStyle().width = Panorama::Length::Px(S(165));
-    m_ui->guestButton->GetStyle().height = Panorama::Length::Px(S(30));
-    m_ui->guestButton->GetStyle().backgroundColor = grayBtn;
-    m_ui->guestButton->GetStyle().borderRadius = S(4);
-    m_ui->guestButton->GetStyle().marginLeft = Panorama::Length::Px(S(195));
-    m_ui->guestButton->GetStyle().marginTop = Panorama::Length::Px(S(buttonY + 75));
-    m_ui->guestButton->AddClass("btn-sm");  // CSS class for small button (12px)
-    m_ui->guestButton->GetStyle().color = white;
     m_ui->guestButton->SetOnActivate([this]() { OnGuestClicked(); });
-    m_ui->loginBox->AddChild(m_ui->guestButton);
+    m_ui->buttonRow->AddChild(m_ui->guestButton);
+    m_ui->focusOrder.push_back(m_ui->guestButton);
     
-    // Loading overlay
-    m_ui->loadingOverlay = P("LoadingOverlay", 0, 0, Panorama::Color(0, 0, 0, 0.7f));
+    // Keyboard hint (styled by #HintLabel in CSS)
+    auto hintLabel = std::make_shared<Panorama::CLabel>("Tab: next | Enter: submit | Esc: back", "HintLabel");
+    m_ui->loginBox->AddChild(hintLabel);
+    
+    // Loading overlay (styled by #LoadingOverlay in CSS)
+    m_ui->loadingOverlay = std::make_shared<Panorama::CPanel2D>("LoadingOverlay");
     m_ui->loadingOverlay->SetVisible(false);
     m_ui->root->AddChild(m_ui->loadingOverlay);
     
-    m_ui->loadingLabel = L("Connecting...", "subheading", white);
-    m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px((sw - S(100)) / 2);
-    m_ui->loadingLabel->GetStyle().marginTop = Panorama::Length::Px(sh / 2);
+    // Loading label (styled by #LoadingLabel in CSS)
+    m_ui->loadingLabel = std::make_shared<Panorama::CLabel>("Connecting...", "LoadingLabel");
+    m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - 150.0f) / 2));
+    m_ui->loadingLabel->GetStyle().marginTop = Panorama::Length::Px(std::round(sh / 2));
     m_ui->loadingOverlay->AddChild(m_ui->loadingLabel);
+    
+    // Set initial focus to username field
+    if (m_ui->usernameInput) {
+        m_ui->usernameInput->SetFocus();
+    }
 }
 
 void LoginState::DestroyUI() {
     if (m_ui->root) {
         auto& engine = Panorama::CUIEngine::Instance();
         
-        // Clear all input state to avoid dangling pointers
-        engine.ClearAllInputState();
+        // Clear input state only if it points into the subtree we're about to destroy
+        engine.ClearInputStateForSubtree(m_ui->root.get());
         
         auto* uiRoot = engine.GetRoot();
         if (uiRoot) {
@@ -465,25 +421,63 @@ void LoginState::OnGuestClicked() {
 }
 
 bool LoginState::OnKeyDown(i32 key) {
-    // Always forward keyboard events to UI engine for text input
     auto& engine = Panorama::CUIEngine::Instance();
     
-    // Enter key to submit - check focus first, then forward to UI
-    if (key == 13) { // VK_RETURN
+    // Tab - cycle through focusable elements
+    if (key == VK_TAB) {
+        if (m_ui->focusOrder.empty()) return false;
+        
+        // Find current focused element
+        auto* focused = engine.GetFocusedPanel();
+        i32 currentIdx = -1;
+        for (size_t i = 0; i < m_ui->focusOrder.size(); ++i) {
+            if (m_ui->focusOrder[i].get() == focused) {
+                currentIdx = static_cast<i32>(i);
+                break;
+            }
+        }
+        
+        // Check if Shift is held (reverse direction)
+        bool shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+        
+        i32 nextIdx;
+        if (shiftHeld) {
+            nextIdx = (currentIdx <= 0) ? static_cast<i32>(m_ui->focusOrder.size()) - 1 : currentIdx - 1;
+        } else {
+            nextIdx = (currentIdx < 0 || currentIdx >= static_cast<i32>(m_ui->focusOrder.size()) - 1) ? 0 : currentIdx + 1;
+        }
+        
+        m_ui->focusOrder[nextIdx]->SetFocus();
+        return true;
+    }
+    
+    // Enter - submit form
+    if (key == VK_RETURN) {
         auto* focused = engine.GetFocusedPanel();
         bool isTextEntry = focused && focused->GetPanelType() == Panorama::PanelType::TextEntry;
         
-        // If text entry is focused, let UI handle it
+        // If text entry is focused, let UI handle it first, then submit
         if (isTextEntry) {
             engine.OnKeyDown(key);
-            return true;
         }
         
-        // Otherwise, submit form
+        // Submit form
         if (m_isRegistering) {
             OnRegisterClicked();
         } else {
             OnLoginClicked();
+        }
+        return true;
+    }
+    
+    // Escape - clear error or switch back to login mode
+    if (key == VK_ESCAPE) {
+        if (m_ui->errorLabel && m_ui->errorLabel->IsVisible()) {
+            ClearError();
+        } else if (m_isRegistering) {
+            m_isRegistering = false;
+            ClearError();
+            m_needsUIRebuild = true;
         }
         return true;
     }

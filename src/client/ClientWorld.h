@@ -75,6 +75,9 @@ public:
     // Render time (for interpolation)
     f32 getRenderTime() const { return renderTime_; }
     
+    // Network ID assignment (for external entity creation)
+    NetworkId assignNetworkId(Entity entity, NetworkId networkId);
+    
 private:
     EntityManager entityManager_;
     
@@ -105,7 +108,6 @@ private:
     // Helper methods
     void createOrUpdateEntity(const EntitySnapshot& snapshot);
     void interpolateEntity(Entity entity, const EntitySnapshot& from, const EntitySnapshot& to, f32 t);
-    NetworkId assignNetworkId(Entity entity, NetworkId networkId);
     void removeNetworkId(Entity entity);
 };
 

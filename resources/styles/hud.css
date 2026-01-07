@@ -1,0 +1,156 @@
+/* HUD stylesheet for DOTA2-style interface */
+
+/* ===== HUD Root ===== */
+#HUDRoot {
+  width: 100%;
+  height: 100%;
+}
+
+/* ===== Hero Unit Frame ===== */
+#HeroUnitFrame {
+  margin-left: 20px;
+  margin-bottom: 20px;
+  width: 300px;
+  height: 120px;
+  background-color: rgba(16, 16, 18, 0.85);
+  border-radius: 8px;
+  padding-left: 15px;
+  padding-right: 15px;
+  padding-top: 10px;
+}
+
+/* ===== Ability Panel ===== */
+#AbilityPanel {
+  width: 400px;
+  height: 80px;
+  margin-bottom: 20px;
+  background-color: rgba(16, 16, 18, 0.85);
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-top: 10px;
+}
+
+.AbilitySlot {
+  width: 60px;
+  height: 60px;
+  margin-right: 5px;
+  background-color: rgba(32, 32, 40, 0.9);
+  border-radius: 6px;
+  border-width: 2px;
+  border-color: rgba(64, 64, 70, 0.8);
+}
+
+/* ===== Item Panel ===== */
+#ItemPanel {
+  width: 300px;
+  height: 80px;
+  margin-bottom: 20px;
+  background-color: rgba(16, 16, 18, 0.85);
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-top: 10px;
+}
+
+.ItemSlot {
+  width: 45px;
+  height: 45px;
+  margin-right: 3px;
+  background-color: rgba(32, 32, 40, 0.9);
+  border-radius: 4px;
+  border-width: 1px;
+  border-color: rgba(64, 64, 70, 0.8);
+}
+
+/* ===== Minimap ===== */
+#Minimap {
+  width: 200px;
+  height: 200px;
+  margin-right: 20px;
+  margin-bottom: 20px;
+  background-color: rgba(8, 12, 8, 0.9);
+  border-radius: 4px;
+  border-width: 2px;
+  border-color: rgba(48, 56, 48, 0.8);
+}
+
+/* ===== Scoreboard ===== */
+#Scoreboard {
+  width: 800px;
+  height: 600px;
+  background-color: rgba(16, 16, 18, 0.95);
+  border-radius: 12px;
+  padding-top: 30px;
+  padding-bottom: 30px;
+  padding-left: 30px;
+  padding-right: 30px;
+}
+
+/* ===== Tooltip ===== */
+#Tooltip {
+  background-color: rgba(8, 8, 10, 0.95);
+  border-radius: 6px;
+  border-width: 1px;
+  border-color: rgba(64, 64, 70, 0.8);
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* ===== Notification Manager ===== */
+#NotificationManager {
+  width: 300px;
+  height: 400px;
+  margin-right: 20px;
+  margin-top: 20px;
+}
+
+.Notification {
+  width: 280px;
+  height: 60px;
+  margin-bottom: 10px;
+  background-color: rgba(16, 16, 18, 0.9);
+  border-radius: 6px;
+  border-width: 1px;
+  border-color: rgba(64, 64, 70, 0.6);
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* ===== Health and Mana Bars ===== */
+.HealthBar {
+  background-color: rgba(48, 16, 16, 0.9);
+  border-radius: 4px;
+}
+
+.ManaBar {
+  background-color: rgba(16, 16, 48, 0.9);
+  border-radius: 4px;
+}
+
+.ExperienceBar {
+  background-color: rgba(48, 32, 16, 0.9);
+  border-radius: 2px;
+}
+
+/* ===== Text Labels ===== */
+.HealthLabel, .ManaLabel {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 1.0);
+}
+
+.LevelLabel {
+  font-size: 16px;
+  color: rgba(255, 212, 0, 1.0);
+  font-weight: bold;
+}
+
+/* ===== Hotkey Labels ===== */
+.HotkeyLabel {
+  font-size: 12px;
+  color: rgba(180, 180, 180, 1.0);
+  margin-right: 4px;
+  margin-bottom: 2px;
+}

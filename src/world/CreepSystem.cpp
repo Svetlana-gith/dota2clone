@@ -545,26 +545,26 @@ Entity CreepSystem::spawnCreep(Entity spawnPoint, CreepType type, i32 teamId, Cr
     auto& creepComp = entityManager_.addComponent<CreepComponent>(creep, teamId, lane);
     auto& transform = entityManager_.addComponent<TransformComponent>(creep);
     
-    // Set creep type and stats
+    // Set creep type and stats (scaled for 16000x16000 map)
     creepComp.type = type;
     switch (type) {
         case CreepType::Melee:
             creepComp.maxHealth = 550.0f;
             creepComp.damage = 19.0f;
-            creepComp.attackRange = 2.0f;
-            creepComp.moveSpeed = 5.0f;
+            creepComp.attackRange = 100.0f;   // Melee range (~100 units)
+            creepComp.moveSpeed = 325.0f;     // Movement speed in units/sec
             break;
         case CreepType::Ranged:
             creepComp.maxHealth = 300.0f;
             creepComp.damage = 21.0f;
-            creepComp.attackRange = 8.0f;
-            creepComp.moveSpeed = 5.0f;
+            creepComp.attackRange = 500.0f;   // Ranged attack range
+            creepComp.moveSpeed = 325.0f;
             break;
         case CreepType::Siege:
             creepComp.maxHealth = 550.0f;
             creepComp.damage = 39.0f;
-            creepComp.attackRange = 12.0f;
-            creepComp.moveSpeed = 3.5f;
+            creepComp.attackRange = 700.0f;   // Siege range
+            creepComp.moveSpeed = 280.0f;     // Slower
             break;
         default:
             break;
@@ -598,8 +598,8 @@ Entity CreepSystem::spawnCreep(Entity spawnPoint, CreepType type, i32 teamId, Cr
     }
     Vec3 perpDir = glm::normalize(Vec3(-laneDir.z, 0, laneDir.x)); // Perpendicular to lane
     
-    // Formation: spread creeps in a line with some depth
-    f32 spacing = 2.5f;  // Space between creeps
+    // Formation: spread creeps in a line with some depth (scaled for 16000 map)
+    f32 spacing = 80.0f;  // Space between creeps (~80 units)
     i32 row = creepIndex / 3;  // 3 creeps per row
     i32 col = creepIndex % 3;
     
@@ -608,8 +608,8 @@ Entity CreepSystem::spawnCreep(Entity spawnPoint, CreepType type, i32 teamId, Cr
     f32 depthOffset = row * spacing * 1.5f;  // Rows behind each other
     
     // Add small random variation to avoid perfect grid
-    f32 randX = ((rand() % 100) / 100.0f - 0.5f) * 0.8f;
-    f32 randZ = ((rand() % 100) / 100.0f - 0.5f) * 0.8f;
+    f32 randX = ((rand() % 100) / 100.0f - 0.5f) * 20.0f;
+    f32 randZ = ((rand() % 100) / 100.0f - 0.5f) * 20.0f;
     
     Vec3 formationOffset = perpDir * lateralOffset - laneDir * depthOffset + Vec3(randX, 0, randZ);
     
@@ -623,20 +623,21 @@ Entity CreepSystem::spawnCreep(Entity spawnPoint, CreepType type, i32 teamId, Cr
     // Store formation index for maintaining formation during movement
     creepComp.formationIndex = creepIndex;
     
-    // Create mesh based on type
+    // Create mesh based on type (sized for 16000x16000 map)
+    // Creeps: ~30-50 units radius, ~60-100 units height
     auto& mesh = entityManager_.addComponent<MeshComponent>(creep, "CreepMesh");
     switch (type) {
         case CreepType::Melee:
-            MeshGenerators::GenerateCylinder(mesh, 0.8f, 1.5f, 12);
+            MeshGenerators::GenerateCylinder(mesh, 35.0f, 70.0f, 12);
             break;
         case CreepType::Ranged:
-            MeshGenerators::GenerateSphere(mesh, 0.7f, 12);
+            MeshGenerators::GenerateSphere(mesh, 30.0f, 12);
             break;
         case CreepType::Siege:
-            MeshGenerators::GenerateCylinder(mesh, 1.2f, 2.0f, 8);
+            MeshGenerators::GenerateCylinder(mesh, 50.0f, 100.0f, 8);
             break;
         default:
-            MeshGenerators::GenerateCylinder(mesh, 0.8f, 1.5f, 12);
+            MeshGenerators::GenerateCylinder(mesh, 35.0f, 70.0f, 12);
             break;
     }
     mesh.gpuUploadNeeded = true;

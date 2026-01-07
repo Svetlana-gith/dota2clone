@@ -1,5 +1,5 @@
 #include "MatchmakingPanel.h"
-#include "../panorama/CUIEngine.h"
+#include "../panorama/core/CUIEngine.h"
 #include <cstdio>
 
 namespace Game {

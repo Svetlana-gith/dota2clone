@@ -5,6 +5,8 @@ add_subdirectory(ui/panorama)
 add_library(world_editor_game STATIC
     # Core game state system
     GameState.h
+    GameState.cpp
+    GameData.h
     GameStateManager.cpp
     DebugConsole.h
     DebugConsole.cpp

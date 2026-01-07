@@ -9,9 +9,11 @@
 
 #include "../GameState.h"
 #include "../DebugConsole.h"
-#include "../ui/panorama/CUIEngine.h"
-#include "../ui/panorama/CPanel2D.h"
-#include "../ui/panorama/CStyleSheet.h"
+#include "../ui/panorama/core/CUIEngine.h"
+#include "../ui/panorama/core/CPanel2D.h"
+#include "../ui/panorama/widgets/CLabel.h"
+#include "../ui/panorama/widgets/CButton.h"
+#include "../ui/panorama/layout/CStyleSheet.h"
 #include "../../client/ClientWorld.h"
 #include "../../server/ServerWorld.h"
 #include "../../network/NetworkClient.h"
@@ -212,7 +214,18 @@ void HeroPickState::UpdatePlayerSlot(u8 teamSlot, const std::string& playerName,
 
 void HeroPickState::OnExit() {
     // Don't disconnect - connection persists to InGameState
+    LOG_INFO("HeroPickState::OnExit()");
     DestroyUI();
+
+    // Post-condition: HeroPick UI must not remain attached to Panorama root.
+    auto& engine = Panorama::CUIEngine::Instance();
+    if (auto* leaked = engine.FindPanelByID("HeroPickRoot")) {
+        LOG_ERROR("HeroPickState::OnExit - HeroPickRoot still found after DestroyUI (ptr={}, parent={})",
+                  static_cast<void*>(leaked),
+                  leaked->GetParent() ? leaked->GetParent()->GetID().c_str() : "<null>");
+    } else {
+        LOG_INFO("HeroPickState::OnExit - HeroPickRoot cleaned up");
+    }
 }
 
 // Scaled helper
@@ -455,13 +468,64 @@ void HeroPickState::CreateUI() {
 }
 
 void HeroPickState::DestroyUI() {
+    auto& engine = Panorama::CUIEngine::Instance();
+
+    // Be robust: sometimes the subtree we want to destroy may not be the exact pointer stored in m_ui->root
+    // (e.g. if something re-created UI or the pointer got swapped). Always try to remove by ID too.
+    Panorama::CPanel2D* rootById = engine.FindPanelByID("HeroPickRoot");
+
     if (m_ui->root) {
-        auto& engine = Panorama::CUIEngine::Instance();
-        engine.ClearAllInputState();
+        engine.ClearInputStateForSubtree(m_ui->root.get());
         if (auto* uiRoot = engine.GetRoot()) {
             uiRoot->RemoveChild(m_ui->root.get());
         }
+        // If it still exists in the tree, detach it from its current parent.
+        if (rootById) {
+            LOG_WARN("HeroPickState::DestroyUI - HeroPickRoot still in tree after RemoveChild(m_ui->root). Detaching by ID.");
+            rootById->SetVisible(false);
+            rootById->SetParent(nullptr);
+        }
+    } else if (rootById) {
+        // m_ui->root is null but the UI subtree still exists. Detach it to avoid leaking UI across states.
+        LOG_WARN("HeroPickState::DestroyUI - m_ui->root is null but HeroPickRoot exists. Detaching by ID.");
+        engine.ClearInputStateForSubtree(rootById);
+        rootById->SetVisible(false);
+        rootById->SetParent(nullptr);
     }
+
+    // Last resort: if multiple HeroPick panels were accidentally created, remove them all.
+    // This guarantees the pick UI cannot leak into InGame even if IDs are duplicated.
+    int removed = 0;
+    for (;;) {
+        auto* p = engine.FindPanelByID("HeroPickRoot");
+        if (!p) break;
+        LOG_WARN("HeroPickState::DestroyUI - removing extra HeroPickRoot (ptr={})", static_cast<void*>(p));
+        engine.ClearInputStateForSubtree(p);
+        p->SetVisible(false);
+        p->SetParent(nullptr);
+        removed++;
+        if (removed > 16) { // sanity guard
+            LOG_ERROR("HeroPickState::DestroyUI - too many HeroPickRoot panels, aborting cleanup loop");
+            break;
+        }
+    }
+
+    // Extra safety: detach key panels if they exist outside the expected subtree.
+    const char* extraIds[] = {"HeroGrid", "RadiantPanel", "DirePanel", "Header", "BottomPanel"};
+    for (const char* id : extraIds) {
+        int n = 0;
+        for (;;) {
+            auto* p = engine.FindPanelByID(id);
+            if (!p) break;
+            // If these are still present, they are part of leaked UI. Detach them too.
+            LOG_WARN("HeroPickState::DestroyUI - detaching leaked panel id='{}' ptr={}", id, static_cast<void*>(p));
+            engine.ClearInputStateForSubtree(p);
+            p->SetVisible(false);
+            p->SetParent(nullptr);
+            if (++n > 32) break;
+        }
+    }
+
     m_ui->root.reset();
     m_ui->heroCards.clear();
     m_ui->radiantSlots.clear();
@@ -524,11 +588,12 @@ void HeroPickState::Update(f32 deltaTime) {
 }
 
 void HeroPickState::TransitionToGame() {
-    LOG_INFO("Transitioning to InGame state (connection persists)");
+    LOG_INFO("Transitioning to InGame state with hero '{}' (connection persists)", m_confirmedHero);
     
     if (m_manager) {
         if (auto* inGame = m_manager->GetInGameState()) {
             inGame->SetWorlds(std::move(m_clientWorld), std::move(m_serverWorld));
+            inGame->SetSelectedHero(m_confirmedHero);
         }
         // Connection persists - no need to pass server info, it's in GameStateManager
         m_manager->ChangeState(EGameState::InGame);
@@ -616,6 +681,7 @@ void HeroPickState::OnConfirmPick() {
             if (m_manager) {
                 if (auto* inGame = m_manager->GetInGameState()) {
                     inGame->SetWorlds(std::move(m_clientWorld), std::move(m_serverWorld));
+                    inGame->SetSelectedHero(m_confirmedHero);
                 }
                 m_manager->ChangeState(EGameState::InGame);
             }
@@ -661,18 +727,16 @@ bool HeroPickState::OnMouseMove(f32 x, f32 y) {
 }
 
 bool HeroPickState::OnMouseDown(f32 x, f32 y, i32 b) {
-    LOG_INFO("HeroPickState::OnMouseDown DISABLED for debug pos=({:.0f},{:.0f})", x, y);
+    LOG_INFO("HeroPickState::OnMouseDown pos=({:.0f},{:.0f}) button={}", x, y, b);
     spdlog::default_logger()->flush();
-    // TEMPORARY: Skip UI mouse handling to isolate crash
-    // Panorama::CUIEngine::Instance().OnMouseDown(x, y, b);
+    Panorama::CUIEngine::Instance().OnMouseDown(x, y, b);
     return true;
 }
 
 bool HeroPickState::OnMouseUp(f32 x, f32 y, i32 b) {
-    LOG_INFO("HeroPickState::OnMouseUp DISABLED for debug pos=({:.0f},{:.0f})", x, y);
+    LOG_INFO("HeroPickState::OnMouseUp pos=({:.0f},{:.0f}) button={}", x, y, b);
     spdlog::default_logger()->flush();
-    // TEMPORARY: Skip UI mouse handling to isolate crash
-    // Panorama::CUIEngine::Instance().OnMouseUp(x, y, b);
+    Panorama::CUIEngine::Instance().OnMouseUp(x, y, b);
     return true;
 }
 

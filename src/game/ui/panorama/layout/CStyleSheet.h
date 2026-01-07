@@ -4,7 +4,7 @@
  * Parses and applies styles similar to Valve's Panorama CSS
  */
 
-#include "PanoramaTypes.h"
+#include "../core/PanoramaTypes.h"
 #include <unordered_map>
 #include <optional>
 

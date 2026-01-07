@@ -1,5 +1,6 @@
 #include "ClientWorld.h"
 #include "world/Components.h"
+#include "world/HeroSystem.h"
 
 namespace WorldEditor {
 
@@ -135,20 +136,40 @@ void ClientWorld::createOrUpdateEntity(const EntitySnapshot& snapshot) {
         // Add required components based on entity type
         addComponent<TransformComponent>(entity);
         
-        if (snapshot.entityType == 2) { // Creep
+        if (snapshot.entityType == 1) { // Hero
+            auto& hero = addComponent<HeroComponent>(entity, "RemoteHero", snapshot.teamId);
+            hero.currentHealth = snapshot.health;
+            hero.maxHealth = snapshot.maxHealth;
+            hero.currentMana = snapshot.mana;
+            hero.maxMana = snapshot.maxMana;
+            hero.isPlayerControlled = false; // Remote heroes are not locally controlled
+        } else if (snapshot.entityType == 2) { // Creep
             addComponent<CreepComponent>(entity);
         }
         
-        if (snapshot.maxHealth > 0.0f) {
+        if (snapshot.maxHealth > 0.0f && !hasComponent<HeroComponent>(entity)) {
             addComponent<HealthComponent>(entity);
         }
+        
+        LOG_DEBUG("Created networked entity: networkId={}, entityType={}", 
+                  snapshot.networkId, snapshot.entityType);
     }
     
-    // Update transform (will be interpolated later)
+    // Update transform
     if (hasComponent<TransformComponent>(entity)) {
         auto& transform = getComponent<TransformComponent>(entity);
-        // Store server position for interpolation
-        // Actual interpolation happens in interpolateRemoteEntities()
+        transform.position = snapshot.position;
+        transform.rotation = snapshot.rotation;
+    }
+    
+    // Update hero stats
+    if (hasComponent<HeroComponent>(entity)) {
+        auto& hero = getComponent<HeroComponent>(entity);
+        hero.currentHealth = snapshot.health;
+        hero.maxHealth = snapshot.maxHealth;
+        hero.currentMana = snapshot.mana;
+        hero.maxMana = snapshot.maxMana;
+        hero.teamId = snapshot.teamId;
     }
     
     // Update health

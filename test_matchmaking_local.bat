@@ -21,22 +21,26 @@ set CONFIG=%1
 if "%CONFIG%"=="" set CONFIG=Debug
 
 set ROOT=%~dp0
-set BIN=%ROOT%build\bin\%CONFIG%
+set BIN=%ROOT%build-vs18\bin\%CONFIG%
 
 if not exist "%BIN%\AuthServer.exe" (
   echo ERROR: "%BIN%\AuthServer.exe" not found. Build first.
+  pause
   exit /b 1
 )
 if not exist "%BIN%\MatchmakingCoordinator.exe" (
   echo ERROR: "%BIN%\MatchmakingCoordinator.exe" not found. Build first.
+  pause
   exit /b 1
 )
 if not exist "%BIN%\DedicatedServer.exe" (
   echo ERROR: "%BIN%\DedicatedServer.exe" not found. Build first.
+  pause
   exit /b 1
 )
 if not exist "%BIN%\Game.exe" (
   echo ERROR: "%BIN%\Game.exe" not found. Build first.
+  pause
   exit /b 1
 )
 
