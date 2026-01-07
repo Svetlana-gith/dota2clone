@@ -27,6 +27,10 @@ void GameStateManager::Initialize() {
     m_loginState->m_manager = this;
     LOG_INFO("LoginState created");
     
+    m_registerState = std::make_unique<RegisterState>();
+    m_registerState->m_manager = this;
+    LOG_INFO("RegisterState created");
+    
     m_mainMenuState = std::make_unique<MainMenuState>();
     m_mainMenuState->m_manager = this;
     LOG_INFO("MainMenuState created");
@@ -62,6 +66,7 @@ void GameStateManager::Shutdown() {
     
     // Delete pre-created states
     m_loginState.reset();
+    m_registerState.reset();
     m_mainMenuState.reset();
     m_heroesState.reset();
     m_heroPickState.reset();
@@ -120,6 +125,9 @@ void GameStateManager::ChangeState(EGameState newState) {
         case EGameState::Login:
             state = m_loginState.get();
             break;
+        case EGameState::Register:
+            state = m_registerState.get();
+            break;
         case EGameState::MainMenu:
             state = m_mainMenuState.get();
             break;
@@ -171,6 +179,7 @@ void GameStateManager::PushState(EGameState state) {
     IGameState* newState = nullptr;
     switch (state) {
         case EGameState::Login: newState = m_loginState.get(); break;
+        case EGameState::Register: newState = m_registerState.get(); break;
         case EGameState::MainMenu: newState = m_mainMenuState.get(); break;
         case EGameState::Heroes: newState = m_heroesState.get(); break;
         case EGameState::HeroPick: newState = m_heroPickState.get(); break;
@@ -291,6 +300,12 @@ void GameStateManager::OnMouseUp(f32 x, f32 y, i32 button) {
         m_stateStack.back()->OnMouseUp(x, y, button);
         LOG_INFO("GameStateManager::OnMouseUp state->OnMouseUp returned");
         spdlog::default_logger()->flush();
+    }
+}
+
+void GameStateManager::OnResize(f32 width, f32 height) {
+    if (!m_stateStack.empty()) {
+        m_stateStack.back()->OnResize(width, height);
     }
 }
 

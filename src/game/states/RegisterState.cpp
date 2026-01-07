@@ -1,14 +1,14 @@
 /**
- * LoginState - Authentication screen (Refactored)
+ * RegisterState - Registration screen
  * 
- * Uses modular components: LoginHeader, LoginForm, LoginFooter
- * Requirements: 1.1, 1.3, 5.1, 5.3, 6.1, 6.3, 6.4, 6.7, 7.1-7.3
+ * Uses modular components: LoginHeader, RegisterForm, LoginFooter
+ * Requirements: 1.1, 1.4, 4.1-4.6, 6.2, 6.3, 6.5, 6.6, 6.8
  * 
  * Keyboard shortcuts:
  *   Tab       - Next input field
  *   Shift+Tab - Previous input field  
- *   Enter     - Submit form (login)
- *   Escape    - Clear error
+ *   Enter     - Submit form (register)
+ *   Escape    - Clear error or back to login
  */
 
 #include "../GameState.h"
@@ -18,7 +18,7 @@
 #include "../ui/panorama/widgets/CLabel.h"
 #include "../ui/panorama/layout/CStyleSheet.h"
 #include "../ui/login/LoginHeader.h"
-#include "../ui/login/LoginForm.h"
+#include "../ui/login/RegisterForm.h"
 #include "../ui/login/LoginFooter.h"
 #include "../../auth/AuthClient.h"
 
@@ -28,12 +28,12 @@
 
 namespace Game {
 
-struct LoginState::LoginUI {
+struct RegisterState::RegisterUI {
     std::shared_ptr<Panorama::CPanel2D> root;
     
     // Modular components
     std::unique_ptr<LoginHeader> header;
-    std::unique_ptr<LoginForm> form;
+    std::unique_ptr<RegisterForm> form;
     std::unique_ptr<LoginFooter> footer;
     
     // Loading overlay
@@ -41,31 +41,31 @@ struct LoginState::LoginUI {
     std::shared_ptr<Panorama::CLabel> loadingLabel;
 };
 
-LoginState::LoginState() 
-    : m_ui(std::make_unique<LoginUI>())
+RegisterState::RegisterState() 
+    : m_ui(std::make_unique<RegisterUI>())
 {
 }
 
-LoginState::~LoginState() = default;
+RegisterState::~RegisterState() = default;
 
-void LoginState::OnEnter() {
-    LOG_INFO("LoginState::OnEnter()");
+void RegisterState::OnEnter() {
+    LOG_INFO("RegisterState::OnEnter()");
     
-    // Load login stylesheet
+    // Load login stylesheet (shared with LoginState)
     Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login.css");
     
     CreateUI();
     SetupAuthCallbacks();
     
-    LOG_INFO("LoginState UI created");
-    ConsoleLog("Login screen loaded");
+    LOG_INFO("RegisterState UI created");
+    ConsoleLog("Registration screen loaded");
 }
 
-void LoginState::OnExit() {
+void RegisterState::OnExit() {
     DestroyUI();
 }
 
-void LoginState::Update(f32 deltaTime) {
+void RegisterState::Update(f32 deltaTime) {
     auto* authClient = m_manager->GetAuthClient();
     if (authClient) {
         authClient->Update();
@@ -74,11 +74,11 @@ void LoginState::Update(f32 deltaTime) {
     Panorama::CUIEngine::Instance().Update(deltaTime);
 }
 
-void LoginState::Render() {
+void RegisterState::Render() {
     Panorama::CUIEngine::Instance().Render();
 }
 
-void LoginState::CreateUI() {
+void RegisterState::CreateUI() {
     auto& engine = Panorama::CUIEngine::Instance();
     auto* uiRoot = engine.GetRoot();
     if (!uiRoot) return;
@@ -93,26 +93,25 @@ void LoginState::CreateUI() {
     m_ui->root->GetStyle().flowChildren = Panorama::FlowDirection::Down;
     uiRoot->AddChild(m_ui->root);
     
-    // Create modular components
+    // Create modular components (reuses LoginHeader and LoginFooter)
     m_ui->header = std::make_unique<LoginHeader>();
     m_ui->header->Create(m_ui->root.get(), sw, sh);
     
-    m_ui->form = std::make_unique<LoginForm>();
+    m_ui->form = std::make_unique<RegisterForm>();
     m_ui->form->Create(m_ui->root.get(), sw, sh);
     
     // Setup form callbacks
     m_ui->form->SetOnSubmit([this]() {
-        OnLoginClicked();
+        OnRegisterClicked();
     });
     
-    m_ui->form->SetOnCreateAccount([this]() {
-        // Transition to Register state
-        m_manager->ChangeState(EGameState::Register);
+    m_ui->form->SetOnBackToLogin([this]() {
+        OnBackToLoginClicked();
     });
     
     m_ui->footer = std::make_unique<LoginFooter>();
     m_ui->footer->Create(m_ui->root.get(), sw, sh);
-
+    
     // Loading overlay (styled by #LoadingOverlay in CSS)
     m_ui->loadingOverlay = std::make_shared<Panorama::CPanel2D>("LoadingOverlay");
     m_ui->loadingOverlay->GetStyle().width = Panorama::Length::Fill();
@@ -121,8 +120,8 @@ void LoginState::CreateUI() {
     m_ui->root->AddChild(m_ui->loadingOverlay);
     
     // Loading label (styled by #LoadingLabel in CSS)
-    m_ui->loadingLabel = std::make_shared<Panorama::CLabel>("Connecting...", "LoadingLabel");
-    m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - 150.0f) / 2));
+    m_ui->loadingLabel = std::make_shared<Panorama::CLabel>("Creating account...", "LoadingLabel");
+    m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - 180.0f) / 2));
     m_ui->loadingLabel->GetStyle().marginTop = Panorama::Length::Px(std::round(sh / 2));
     m_ui->loadingOverlay->AddChild(m_ui->loadingLabel);
     
@@ -130,7 +129,7 @@ void LoginState::CreateUI() {
     m_ui->form->FocusUsername();
 }
 
-void LoginState::DestroyUI() {
+void RegisterState::DestroyUI() {
     if (m_ui->root) {
         auto& engine = Panorama::CUIEngine::Instance();
         
@@ -156,29 +155,16 @@ void LoginState::DestroyUI() {
     }
 }
 
-void LoginState::SetupAuthCallbacks() {
+void RegisterState::SetupAuthCallbacks() {
     auto* authClient = m_manager->GetAuthClient();
     if (!authClient) return;
-    
-    authClient->SetOnLoginSuccess([this](u64 accountId, const std::string& token) {
-        LOG_INFO("Login successful! Account ID: {}", accountId);
-        if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
-        ConsoleLog("Login successful!");
-        
-        m_manager->ChangeState(EGameState::MainMenu);
-    });
-    
-    authClient->SetOnLoginFailed([this](const std::string& error) {
-        LOG_WARN("Login failed: {}", error);
-        if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
-        ShowError(error);
-    });
     
     authClient->SetOnRegisterSuccess([this](u64 accountId, const std::string& token) {
         LOG_INFO("Registration successful! Account ID: {}", accountId);
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ConsoleLog("Account created successfully!");
         
+        // Auto-login after registration - go to main menu
         m_manager->ChangeState(EGameState::MainMenu);
     });
     
@@ -187,32 +173,21 @@ void LoginState::SetupAuthCallbacks() {
         if (m_ui->loadingOverlay) m_ui->loadingOverlay->SetVisible(false);
         ShowError(error);
     });
-    
-    authClient->SetOnTokenValid([this](u64 accountId) {
-        LOG_INFO("Stored token valid! Account ID: {}", accountId);
-        ConsoleLog("Session restored!");
-        
-        m_manager->ChangeState(EGameState::MainMenu);
-    });
-    
-    authClient->SetOnTokenInvalid([this]() {
-        LOG_INFO("Stored token invalid or expired");
-    });
 }
 
-void LoginState::ShowError(const std::string& message) {
+void RegisterState::ShowError(const std::string& message) {
     if (m_ui->form) {
         m_ui->form->ShowError(message);
     }
 }
 
-void LoginState::ClearError() {
+void RegisterState::ClearError() {
     if (m_ui->form) {
         m_ui->form->ClearError();
     }
 }
 
-void LoginState::OnLoginClicked() {
+void RegisterState::OnRegisterClicked() {
     if (!m_ui->form) return;
     
     // Validate inputs using form's validation
@@ -236,22 +211,18 @@ void LoginState::OnLoginClicked() {
     
     ClearError();
     if (m_ui->loadingOverlay) {
-        m_ui->loadingLabel->SetText("Logging in...");
+        m_ui->loadingLabel->SetText("Creating account...");
         m_ui->loadingOverlay->SetVisible(true);
     }
     
-    authClient->Login(username, password);
+    authClient->Register(username, password);
 }
 
-void LoginState::OnRegisterClicked() {
-    // Not used in refactored version - registration is in RegisterState
+void RegisterState::OnBackToLoginClicked() {
+    m_manager->ChangeState(EGameState::Login);
 }
 
-void LoginState::OnGuestClicked() {
-    // Guest functionality removed per requirements
-}
-
-bool LoginState::OnKeyDown(i32 key) {
+bool RegisterState::OnKeyDown(i32 key) {
     // Tab - cycle through focusable elements
     if (key == VK_TAB) {
         if (!m_ui->form) return false;
@@ -267,13 +238,19 @@ bool LoginState::OnKeyDown(i32 key) {
     
     // Enter - submit form
     if (key == VK_RETURN) {
-        OnLoginClicked();
+        OnRegisterClicked();
         return true;
     }
     
-    // Escape - clear error
+    // Escape - clear error first, then back to login
     if (key == VK_ESCAPE) {
-        ClearError();
+        if (m_ui->form) {
+            // If error is visible, clear it first
+            // Otherwise go back to login
+            // Note: For simplicity, always go back to login on Escape
+            // (error clears automatically when form is destroyed)
+            OnBackToLoginClicked();
+        }
         return true;
     }
     
@@ -282,25 +259,19 @@ bool LoginState::OnKeyDown(i32 key) {
     return false;
 }
 
-bool LoginState::OnMouseMove(f32 x, f32 y) {
+bool RegisterState::OnMouseMove(f32 x, f32 y) {
     Panorama::CUIEngine::Instance().OnMouseMove(x, y);
     return true;
 }
 
-bool LoginState::OnMouseDown(f32 x, f32 y, i32 button) {
+bool RegisterState::OnMouseDown(f32 x, f32 y, i32 button) {
     Panorama::CUIEngine::Instance().OnMouseDown(x, y, button);
     return true;
 }
 
-bool LoginState::OnMouseUp(f32 x, f32 y, i32 button) {
+bool RegisterState::OnMouseUp(f32 x, f32 y, i32 button) {
     Panorama::CUIEngine::Instance().OnMouseUp(x, y, button);
     return true;
-}
-
-void LoginState::OnResize(f32 width, f32 height) {
-    // Recreate UI with new screen dimensions
-    DestroyUI();
-    CreateUI();
 }
 
 } // namespace Game

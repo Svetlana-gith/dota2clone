@@ -46,6 +46,7 @@ private:
     i32 m_maxChars = 0;
     bool m_isPassword = false;
     f32 m_cursorBlinkTime = 0.0f;
+    f32 m_scrollOffset = 0.0f;  // Horizontal scroll offset for long text
     std::function<void(const std::string&)> m_onTextChanged;
 };
 

@@ -171,6 +171,12 @@ void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
         rt.Reset();
     }
 
+    // Release viewport resources so they get recreated with new size
+    m_viewportRT.Reset();
+    m_viewportDS.Reset();
+    m_viewportRTWidth = 0;
+    m_viewportRTHeight = 0;
+
     DXGI_SWAP_CHAIN_DESC desc{};
     DX_CHECK(m_swapChain->GetDesc(&desc));
 
@@ -658,7 +664,7 @@ bool DirectXRenderer::CreateDevice() {
 
     // FORCE WARP: Use software renderer for testing on problematic GPUs (Intel HD 4600)
     // Set to true to bypass hardware GPU and use CPU rendering
-    const bool forceWarp = false;
+    const bool forceWarp = true;
     
     if (forceWarp) {
         ComPtr<IDXGIAdapter> warpAdapter;

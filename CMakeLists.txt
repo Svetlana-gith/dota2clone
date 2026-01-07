@@ -231,8 +231,21 @@ else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-# Copy resources
+# Copy resources at configure time
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/resources DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/..)
+
+# Also copy resources at build time (so changes are picked up without reconfigure)
+add_custom_target(copy_resources ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources
+        ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/../resources
+    COMMENT "Copying resources to build directory"
+)
+
+# Make Game depend on copy_resources so resources are always up-to-date
+if(TARGET Game)
+    add_dependencies(Game copy_resources)
+endif()
 
 # Print configuration
 message(STATUS "World Editor Configuration:")

@@ -15,6 +15,7 @@ add_library(world_editor_game STATIC
     
     # Game states
     states/LoginState.cpp
+    states/RegisterState.cpp
     states/MainMenuState.cpp
     states/HeroesState.cpp
     states/HeroPickState.cpp
@@ -36,6 +37,16 @@ add_library(world_editor_game STATIC
     ui/mainmenu/MainMenuBottomBar.cpp
     ui/mainmenu/MainMenuContent.h
     ui/mainmenu/MainMenuContent.cpp
+    
+    # Login specific UI components
+    ui/login/LoginHeader.h
+    ui/login/LoginHeader.cpp
+    ui/login/LoginFooter.h
+    ui/login/LoginFooter.cpp
+    ui/login/LoginForm.h
+    ui/login/LoginForm.cpp
+    ui/login/RegisterForm.h
+    ui/login/RegisterForm.cpp
 )
 
 target_include_directories(world_editor_game PUBLIC

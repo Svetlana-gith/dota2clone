@@ -171,8 +171,8 @@ private:
     D3D12_CPU_DESCRIPTOR_HANDLE m_currentRtvHandle = {};
     bool m_hasRenderTarget = false;
     
-    f32 m_screenWidth = 1920.0f;
-    f32 m_screenHeight = 1080.0f;
+    f32 m_screenWidth = 1280.0f;
+    f32 m_screenHeight = 720.0f;
     
     // Debug
     int m_frameCount = 0;

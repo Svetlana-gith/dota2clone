@@ -21,8 +21,8 @@ namespace Panorama {
 // ============ UI Engine Configuration ============
 
 struct UIEngineConfig {
-    f32 screenWidth = 1920.0f;
-    f32 screenHeight = 1080.0f;
+    f32 screenWidth = 1280.0f;
+    f32 screenHeight = 720.0f;
     f32 uiScale = 1.0f;
     std::string defaultFont = "Roboto Condensed";
     std::string resourcePath = "panorama/";

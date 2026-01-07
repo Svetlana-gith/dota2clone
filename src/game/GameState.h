@@ -44,7 +44,8 @@ class GameStateManager;
 
 enum class EGameState {
     None,
-    Login,          // Login/Registration screen
+    Login,          // Login screen
+    Register,       // Registration screen
     MainMenu,       // Dashboard, profile, matchmaking
     Heroes,         // Hero selection/browsing screen
     Loading,        // Loading screen during map/asset load
@@ -80,6 +81,9 @@ public:
     virtual bool OnMouseUp(f32 x, f32 y, i32 button) { return false; }
     virtual bool OnMouseWheel(f32 delta) { return false; }
     
+    // Window resize
+    virtual void OnResize(f32 width, f32 height) {}
+    
 protected:
     GameStateManager* m_manager = nullptr;
     friend class GameStateManager;
@@ -104,11 +108,12 @@ public:
     bool OnMouseMove(f32 x, f32 y) override;
     bool OnMouseDown(f32 x, f32 y, i32 button) override;
     bool OnMouseUp(f32 x, f32 y, i32 button) override;
+    void OnResize(f32 width, f32 height) override;
     
     // Actions
     void OnLoginClicked();
-    void OnRegisterClicked();
-    void OnGuestClicked();
+    void OnRegisterClicked();  // Deprecated - registration in RegisterState
+    void OnGuestClicked();     // Deprecated - guest removed
     
 private:
     void CreateUI();
@@ -120,15 +125,41 @@ private:
     struct LoginUI;
     std::unique_ptr<LoginUI> m_ui;
     std::unique_ptr<auth::AuthClient> m_authClient;
+};
+
+// ============ Register State ============
+
+class RegisterState : public IGameState {
+public:
+    RegisterState();
+    ~RegisterState() override;
     
-    // Input state
-    std::string m_username;
-    std::string m_password;
-    bool m_isRegistering = false;
-    std::string m_confirmPassword;
+    EGameState GetType() const override { return EGameState::Register; }
+    const char* GetName() const override { return "Register"; }
     
-    // Deferred UI rebuild (to avoid destroying UI from within callback)
-    bool m_needsUIRebuild = false;
+    void OnEnter() override;
+    void OnExit() override;
+    void Update(f32 deltaTime) override;
+    void Render() override;
+    
+    bool OnKeyDown(i32 key) override;
+    bool OnMouseMove(f32 x, f32 y) override;
+    bool OnMouseDown(f32 x, f32 y, i32 button) override;
+    bool OnMouseUp(f32 x, f32 y, i32 button) override;
+    
+    // Actions
+    void OnRegisterClicked();
+    void OnBackToLoginClicked();
+    
+private:
+    void CreateUI();
+    void DestroyUI();
+    void SetupAuthCallbacks();
+    void ShowError(const std::string& message);
+    void ClearError();
+    
+    struct RegisterUI;
+    std::unique_ptr<RegisterUI> m_ui;
 };
 
 // ============ Main Menu State ============
@@ -458,6 +489,7 @@ public:
     void OnMouseMove(f32 x, f32 y);
     void OnMouseDown(f32 x, f32 y, i32 button);
     void OnMouseUp(f32 x, f32 y, i32 button);
+    void OnResize(f32 width, f32 height);
     
     // Transition callbacks
     using StateChangeCallback = std::function<void(EGameState oldState, EGameState newState)>;
@@ -506,6 +538,7 @@ private:
     
     // Pre-created states for quick switching
     std::unique_ptr<LoginState> m_loginState;
+    std::unique_ptr<RegisterState> m_registerState;
     std::unique_ptr<MainMenuState> m_mainMenuState;
     std::unique_ptr<HeroesState> m_heroesState;
     std::unique_ptr<HeroPickState> m_heroPickState;

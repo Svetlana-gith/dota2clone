@@ -1,153 +1,244 @@
-/* Login screen stylesheet */
+/* Login/Register screen stylesheet - Gaming Premium Style */
 @import "base.css";
 
-/* ===== Login Font Sizes (x1.35 scale) ===== */
-.small      { font-size: 14px; }
-.caption    { font-size: 16px; }
-.body       { font-size: 19px; }
-.subheading { font-size: 24px; }
-.heading    { font-size: 30px; }
-.title      { font-size: 38px; }
+/* ===== Gaming Premium Color Palette ===== */
+/* Background: #0A0E17 - Deep dark blue */
+/* Card: #12161F (95% opacity) - Dark card */
+/* Gold primary: #D4A84B - Main accent */
+/* Gold light: #F5D78E - Hover state */
+/* Gold dark: #8B6914 - Active state */
+/* Cyan accent: #4ECDC4 - Secondary accent */
+/* Text primary: #FFFFFF */
+/* Text secondary: #8892A0 */
+/* Input bg: #1A1F2A */
+/* Input border: #2A3040 */
+/* Error: #FF6B6B */
 
 /* ===== Root Container ===== */
 #LoginRoot {
   width: 100%;
   height: 100%;
-  background-color: rgba(5, 10, 20, 1.0);
+  background-color: rgba(10, 14, 23, 1.0);
 }
 
-/* ===== Game Title ===== */
-#GameTitle {
-  color: rgba(100, 220, 220, 1.0);
-  font-size: 38px;
+/* ===== Header ===== */
+#LoginHeader {
+  width: 100%;
+  height: 15%;
 }
 
-/* ===== Login Box ===== */
-#LoginBox {
-  width: 513px;
-  background-color: rgba(20, 23, 28, 0.95);
-  border-radius: 8px;
-  padding-left: 32px;
-  padding-right: 32px;
-  padding-top: 27px;
-  padding-bottom: 32px;
-  flow-children: down;
+/* ===== Game Logo ===== */
+#GameLogo {
+  color: rgba(212, 168, 75, 1.0);
+  font-size: 48px;
+}
+
+/* ===== Accent Line ===== */
+#AccentLine {
+  background-color: rgba(212, 168, 75, 0.8);
+  width: 15%;
+  height: 3px;
+}
+
+/* ===== Form Container ===== */
+#LoginFormContainer {
+  width: 40%;
+  height: 47%;
+  background-color: rgba(18, 22, 31, 0.95);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: rgba(212, 168, 75, 0.3);
 }
 
 /* ===== Form Title ===== */
 #FormTitle {
+  width: 87%;
+  height: 7%;
   color: rgba(255, 255, 255, 1.0);
-  font-size: 30px;
-  margin-bottom: 22px;
+  font-size: 28px;
+  x: 6%;
+  y: 3%;
 }
 
 /* ===== Field Labels ===== */
 .FieldLabel {
-  color: rgba(153, 153, 153, 1.0);
-  font-size: 16px;
-  margin-bottom: 5px;
+  width: 87%;
+  height: 4%;
+  color: rgba(136, 146, 160, 1.0);
+  font-size: 14px;
 }
 
-.FieldLabelSpaced {
-  color: rgba(153, 153, 153, 1.0);
-  font-size: 16px;
-  margin-top: 16px;
-  margin-bottom: 5px;
+#UsernameLabel {
+  x: 6%;
+  y: 12%;
+}
+
+#PasswordLabel {
+  x: 6%;
+  y: 29%;
+}
+
+#ConfirmPasswordLabel {
+  x: 6%;
+  y: 46%;
 }
 
 /* ===== Text Inputs ===== */
 .LoginInput {
-  width: 449px;
-  height: 49px;
-  background-color: rgba(31, 33, 38, 1.0);
-  border-radius: 5px;
-  padding-left: 14px;
-  font-size: 19px;
+  width: 87%;
+  height: 11%;
+  background-color: rgba(26, 31, 42, 1.0);
+  border-radius: 8px;
+  border-width: 2px;
+  border-color: rgba(42, 48, 64, 1.0);
+  padding-left: 16px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 1.0);
 }
 
 .LoginInput:focus {
-  border-width: 2px;
-  border-color: rgba(100, 180, 220, 0.8);
+  border-color: rgba(212, 168, 75, 0.8);
+}
+
+#UsernameInput {
+  x: 6%;
+  y: 16%;
+}
+
+#PasswordInput {
+  x: 6%;
+  y: 33%;
+}
+
+#ConfirmPasswordInput {
+  x: 6%;
+  y: 50%;
 }
 
 /* ===== Error Label ===== */
 #ErrorLabel {
-  color: rgba(217, 64, 64, 1.0);
-  font-size: 16px;
-  margin-top: 11px;
+  width: 87%;
+  height: 4%;
+  color: rgba(255, 107, 107, 1.0);
+  font-size: 14px;
+  x: 6%;
+  y: 46%;
 }
 
 /* ===== Primary Button (Login/Register) ===== */
-#LoginBtn {
-  width: 449px;
-  height: 54px;
-  background-color: rgba(46, 115, 46, 1.0);
-  border-radius: 5px;
-  margin-top: 22px;
-  font-size: 19px;
-  color: rgba(255, 255, 255, 1.0);
+#PrimaryButton {
+  width: 87%;
+  height: 10%;
+  background-color: rgba(212, 168, 75, 1.0);
+  border-radius: 8px;
+  font-size: 18px;
+  color: rgba(10, 14, 23, 1.0);
+  x: 6%;
+  y: 52%;
 }
 
-#LoginBtn:hover {
-  background-color: rgba(56, 135, 56, 1.0);
+#PrimaryButton:hover {
+  background-color: rgba(245, 215, 142, 1.0);
 }
 
-#LoginBtn:active {
-  background-color: rgba(36, 95, 36, 1.0);
+#PrimaryButton:active {
+  background-color: rgba(139, 105, 20, 1.0);
 }
 
-/* ===== Button Row ===== */
-#ButtonRow {
-  width: 449px;
-  height: 43px;
-  margin-top: 14px;
-  flow-children: right;
-}
-
-/* ===== Secondary Buttons ===== */
-#SwitchBtn {
-  width: 216px;
-  height: 43px;
-  background-color: rgba(46, 89, 140, 1.0);
-  border-radius: 5px;
+/* ===== Secondary Button (Create Account/Back) ===== */
+#SecondaryButton {
+  width: 87%;
+  height: 8%;
+  background-color: rgba(42, 48, 64, 1.0);
+  border-radius: 8px;
+  border-width: 1px;
+  border-color: rgba(78, 205, 196, 0.5);
   font-size: 16px;
-  color: rgba(255, 255, 255, 1.0);
+  color: rgba(78, 205, 196, 1.0);
+  x: 6%;
+  y: 65%;
 }
 
-#SwitchBtn:hover {
-  background-color: rgba(56, 109, 170, 1.0);
+#SecondaryButton:hover {
+  background-color: rgba(52, 58, 74, 1.0);
+  border-color: rgba(78, 205, 196, 0.8);
 }
 
-#GuestBtn {
-  width: 216px;
-  height: 43px;
-  background-color: rgba(64, 64, 71, 1.0);
-  border-radius: 5px;
-  margin-left: 17px;
-  font-size: 16px;
-  color: rgba(255, 255, 255, 1.0);
+#SecondaryButton:active {
+  background-color: rgba(32, 38, 54, 1.0);
 }
 
-#GuestBtn:hover {
-  background-color: rgba(84, 84, 91, 1.0);
+/* ===== Footer ===== */
+#LoginFooter {
+  width: 100%;
+  height: 5%;
+  x: 0%;
+  y: 95%;
 }
 
-/* ===== Hint Label ===== */
 #HintLabel {
   color: rgba(102, 102, 102, 1.0);
-  font-size: 14px;
-  margin-top: 19px;
+  font-size: 12px;
 }
 
 /* ===== Loading Overlay ===== */
 #LoadingOverlay {
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.7);
+  background-color: rgba(0, 0, 0, 0.8);
 }
 
 #LoadingLabel {
-  color: rgba(255, 255, 255, 1.0);
+  color: rgba(212, 168, 75, 1.0);
   font-size: 24px;
+}
+
+/* ===== Legacy IDs (for backward compatibility) ===== */
+#LoginBtn {
+  width: 87%;
+  height: 56px;
+  background-color: rgba(212, 168, 75, 1.0);
+  border-radius: 8px;
+  font-size: 18px;
+  color: rgba(10, 14, 23, 1.0);
+}
+
+#LoginBtn:hover {
+  background-color: rgba(245, 215, 142, 1.0);
+}
+
+#GameTitle {
+  color: rgba(212, 168, 75, 1.0);
+  font-size: 48px;
+}
+
+#LoginBox {
+  width: 40%;
+  background-color: rgba(18, 22, 31, 0.95);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: rgba(212, 168, 75, 0.3);
+  padding-left: 6%;
+  padding-right: 6%;
+  padding-top: 27px;
+  padding-bottom: 32px;
+}
+
+/* ===== Register Form Overrides ===== */
+/* Register form has 3 fields, so needs taller container */
+/* Layout: Title 3-9%, Username 11-24%, Password 26-39%, Confirm 41-54%, Error 56-59%, Primary 61-70%, Secondary 73-80% */
+.RegisterForm {
+  height: 65%;
+}
+
+.RegisterError {
+  y: 56%;
+}
+
+.RegisterPrimary {
+  y: 61%;
+}
+
+.RegisterSecondary {
+  y: 73%;
 }

@@ -55,12 +55,12 @@ struct GameplayInput {
     bool altHeld = false;
     
     // Screen dimensions (for edge panning)
-    f32 screenWidth = 1920.0f;
-    f32 screenHeight = 1080.0f;
+    f32 screenWidth = 1280.0f;
+    f32 screenHeight = 720.0f;
     
     // Viewport info (for editor with docked windows)
     Vec2 viewportMin = Vec2(0.0f);
-    Vec2 viewportMax = Vec2(1920.0f, 1080.0f);
+    Vec2 viewportMax = Vec2(1280.0f, 720.0f);
     bool mouseInViewport = true;
 };
 

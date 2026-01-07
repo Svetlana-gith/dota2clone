@@ -26,6 +26,7 @@ CTextEntry::CTextEntry(const std::string& id) : CPanel2D(id) {
 void CTextEntry::SetText(const std::string& text) {
     m_text = text;
     m_cursorPos = static_cast<i32>(text.length());
+    m_scrollOffset = 0.0f;  // Reset scroll when text is set
 }
 
 void CTextEntry::SetFocus() {
@@ -112,42 +113,74 @@ void CTextEntry::Render(CUIRenderer* renderer) {
     font.size = m_computedStyle.fontSize.value_or(16.0f);
     font.family = m_computedStyle.fontFamily.value_or("Roboto Condensed");
     font.bold = m_computedStyle.fontWeight.has_value() && m_computedStyle.fontWeight.value() == "bold";
+    font.letterSpacing = m_computedStyle.letterSpacing.value_or(0.0f);
     
     Color textColor = m_computedStyle.color.value_or(Color::White()); 
     textColor.a *= opacity;
     
     std::string displayText = m_isPassword ? std::string(m_text.length(), '*') : m_text;
     
+    // Calculate cursor position for scroll adjustment
+    i32 textLen = static_cast<i32>(displayText.length());
+    if (m_cursorPos < 0) m_cursorPos = 0;
+    if (m_cursorPos > textLen) m_cursorPos = textLen;
+    
+    f32 cursorXInText = 0.0f;
+    if (m_cursorPos > 0 && !displayText.empty()) {
+        std::string textBeforeCursor = displayText.substr(0, m_cursorPos);
+        cursorXInText = renderer->MeasureText(textBeforeCursor, font).x;
+    }
+    
+    // Calculate visible width (content area)
+    f32 visibleWidth = m_contentBounds.width;
+    
+    // Adjust scroll offset to keep cursor visible
+    f32 cursorScreenX = cursorXInText - m_scrollOffset;
+    
+    // If cursor is past the right edge, scroll right
+    if (cursorScreenX > visibleWidth - 2.0f) {
+        m_scrollOffset = cursorXInText - visibleWidth + 2.0f;
+    }
+    // If cursor is past the left edge, scroll left
+    if (cursorScreenX < 0.0f) {
+        m_scrollOffset = cursorXInText;
+    }
+    // Don't scroll past the beginning
+    if (m_scrollOffset < 0.0f) {
+        m_scrollOffset = 0.0f;
+    }
+    
+    // Draw placeholder or text
     if (displayText.empty() && !m_placeholder.empty()) {
         Color pc = textColor; 
         pc.a *= 0.5f;
         renderer->DrawText(m_placeholder, m_contentBounds, pc, font);
-    } else {
-        renderer->DrawText(displayText, m_contentBounds, textColor, font, HorizontalAlign::Left, VerticalAlign::Center);
+    } else if (!displayText.empty()) {
+        // Create clipped bounds for text rendering
+        Rect2D textBounds = m_contentBounds;
+        textBounds.x -= m_scrollOffset;
+        textBounds.width += m_scrollOffset;  // Extend width to allow text to render
+        
+        // Use clip rect to hide overflow
+        renderer->PushClipRect(m_contentBounds);
+        renderer->DrawText(displayText, textBounds, textColor, font, HorizontalAlign::Left, VerticalAlign::Center);
+        renderer->PopClipRect();
     }
     
     // Draw cursor if focused
     if (m_focused) {
         bool cursorVisible = (m_cursorBlinkTime < 0.5f);
         if (cursorVisible) {
-            if (m_cursorPos < 0) m_cursorPos = 0;
-            if (m_cursorPos > static_cast<i32>(displayText.length())) {
-                m_cursorPos = static_cast<i32>(displayText.length());
+            f32 cursorX = m_contentBounds.x + cursorXInText - m_scrollOffset;
+            
+            // Only draw cursor if it's within visible area
+            if (cursorX >= m_contentBounds.x && cursorX <= m_contentBounds.x + m_contentBounds.width) {
+                f32 textHeight = renderer->MeasureText("Ag", font).y;
+                f32 cursorHeight = textHeight;
+                f32 cursorY = m_contentBounds.y + (m_contentBounds.height - cursorHeight) * 0.5f;
+                
+                renderer->DrawLine(cursorX, cursorY, cursorX, cursorY + cursorHeight, textColor, 2.0f);
             }
-            
-            std::string textBeforeCursor = displayText.substr(0, m_cursorPos);
-            f32 cursorX = m_contentBounds.x;
-            
-            if (!textBeforeCursor.empty()) {
-                Vector2D textSize = renderer->MeasureText(textBeforeCursor, font);
-                cursorX += textSize.x;
-            }
-            
-            f32 textHeight = renderer->MeasureText("Ag", font).y;
-            f32 cursorHeight = textHeight;
-            f32 cursorY = m_contentBounds.y + (m_contentBounds.height - cursorHeight) * 0.5f;
-            
-            renderer->DrawLine(cursorX, cursorY, cursorX, cursorY + cursorHeight, textColor, 2.0f);
         }
     }
 }

@@ -21,7 +21,7 @@ set CONFIG=%1
 if "%CONFIG%"=="" set CONFIG=Debug
 
 set ROOT=%~dp0
-set BIN=%ROOT%build-vs18\bin\%CONFIG%
+set BIN=%ROOT%build\bin\%CONFIG%
 
 if not exist "%BIN%\AuthServer.exe" (
   echo ERROR: "%BIN%\AuthServer.exe" not found. Build first.

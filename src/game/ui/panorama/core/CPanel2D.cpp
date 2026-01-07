@@ -266,7 +266,7 @@ void CPanel2D::ComputeStyle() {
     static int styleLogCount = 0;
     if (styleLogCount < 10) {
         bool hasInlineBg = m_inlineStyle.backgroundColor.has_value();
-        LOG_INFO("CPanel2D::ComputeStyle id='{}' hasInlineBg={}", m_id, hasInlineBg);
+        // LOG_INFO("CPanel2D::ComputeStyle id='{}' hasInlineBg={}", m_id, hasInlineBg);
         styleLogCount++;
     }
     
@@ -340,47 +340,69 @@ void CPanel2D::PerformLayout(const Rect2D& parentBounds) {
     f32 x = parentBounds.x;
     f32 y = parentBounds.y;
     
+    // Check if element has explicit x/y positioning (absolute-like positioning)
+    bool hasExplicitX = m_computedStyle.x.has_value();
+    bool hasExplicitY = m_computedStyle.y.has_value();
+    
+    // Apply explicit x/y positioning (relative to parent content bounds)
+    if (hasExplicitX) {
+        x = parentBounds.x + ResolveLength(m_computedStyle.x.value(), parentBounds.width, parentBounds.width);
+    }
+    if (hasExplicitY) {
+        y = parentBounds.y + ResolveLength(m_computedStyle.y.value(), parentBounds.height, parentBounds.height);
+    }
+    
     // Apply margins (margins are already included in parentBounds for flow layouts)
     f32 marginLeft = m_computedStyle.marginLeft.has_value() ? ResolveLength(m_computedStyle.marginLeft.value(), parentBounds.width, parentBounds.width) : 0;
     f32 marginTop = m_computedStyle.marginTop.has_value() ? ResolveLength(m_computedStyle.marginTop.value(), parentBounds.height, parentBounds.height) : 0;
     f32 marginRight = m_computedStyle.marginRight.has_value() ? ResolveLength(m_computedStyle.marginRight.value(), parentBounds.width, parentBounds.width) : 0;
     f32 marginBottom = m_computedStyle.marginBottom.has_value() ? ResolveLength(m_computedStyle.marginBottom.value(), parentBounds.height, parentBounds.height) : 0;
     
-    // Only apply margins if not in a flow layout (parent will handle positioning)
+    // Only apply margins if not in a flow layout AND no explicit positioning
     // We detect flow layout by checking if parent has flow direction set
     bool inFlowLayout = (m_parent && m_parent->m_computedStyle.flowChildren.has_value() && 
                          m_parent->m_computedStyle.flowChildren.value() != FlowDirection::None);
     
-    if (!inFlowLayout) {
+    if (!inFlowLayout && !hasExplicitX && !hasExplicitY) {
         x += marginLeft;
         y += marginTop;
     }
     
-    // Apply alignment
-    HorizontalAlign hAlign = m_computedStyle.horizontalAlign.value_or(HorizontalAlign::Left);
-    VerticalAlign vAlign = m_computedStyle.verticalAlign.value_or(VerticalAlign::Top);
-    
-    switch (hAlign) {
-        case HorizontalAlign::Center:
-            x = parentBounds.x + (parentBounds.width - width) / 2;
-            break;
-        case HorizontalAlign::Right:
-            x = parentBounds.x + parentBounds.width - width - marginRight;
-            break;
-        default: break;
+    // Apply alignment only if no explicit positioning
+    if (!hasExplicitX) {
+        HorizontalAlign hAlign = m_computedStyle.horizontalAlign.value_or(HorizontalAlign::Left);
+        switch (hAlign) {
+            case HorizontalAlign::Center:
+                x = parentBounds.x + (parentBounds.width - width) / 2;
+                break;
+            case HorizontalAlign::Right:
+                x = parentBounds.x + parentBounds.width - width - marginRight;
+                break;
+            default: break;
+        }
     }
     
-    switch (vAlign) {
-        case VerticalAlign::Center:
-            y = parentBounds.y + (parentBounds.height - height) / 2;
-            break;
-        case VerticalAlign::Bottom:
-            y = parentBounds.y + parentBounds.height - height - marginBottom;
-            break;
-        default: break;
+    if (!hasExplicitY) {
+        VerticalAlign vAlign = m_computedStyle.verticalAlign.value_or(VerticalAlign::Top);
+        switch (vAlign) {
+            case VerticalAlign::Center:
+                y = parentBounds.y + (parentBounds.height - height) / 2;
+                break;
+            case VerticalAlign::Bottom:
+                y = parentBounds.y + parentBounds.height - height - marginBottom;
+                break;
+            default: break;
+        }
     }
     
     m_actualBounds = {x, y, width, height};
+    
+    // Debug: log layout for TextEntry elements
+    // if (m_panelType == PanelType::TextEntry) {
+    //     LOG_INFO("PerformLayout TextEntry id='{}' actualBounds=({:.1f},{:.1f},{:.1f},{:.1f}) parentBounds=({:.1f},{:.1f},{:.1f},{:.1f})",
+    //         m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height,
+    //         parentBounds.x, parentBounds.y, parentBounds.width, parentBounds.height);
+    // }
     
     // Calculate content bounds (minus padding)
     f32 padLeft = m_computedStyle.paddingLeft.has_value() ? ResolveLength(m_computedStyle.paddingLeft.value(), width, width) : 0;
@@ -449,7 +471,13 @@ Vector2D CPanel2D::GetPositionWithinWindow() const {
 }
 
 bool CPanel2D::IsPointInPanel(f32 x, f32 y) const {
-    return m_actualBounds.Contains(x, y);
+    bool result = m_actualBounds.Contains(x, y);
+    // Debug: log hit test for TextEntry elements
+    // if (m_panelType == PanelType::TextEntry) {
+    //     LOG_INFO("IsPointInPanel TextEntry id='{}' point=({:.1f},{:.1f}) bounds=({:.1f},{:.1f},{:.1f},{:.1f}) result={}",
+    //         m_id, x, y, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height, result);
+    // }
+    return result;
 }
 
 // ============ Visibility & State ============
@@ -657,22 +685,22 @@ void CPanel2D::Render(CUIRenderer* renderer) {
     if (opacity <= 0) return;
     
     // Debug logging for hero buttons when pressed
-    if (m_pressed && m_id.find("HeroBtn") != std::string::npos) {
-        LOG_INFO("CPanel2D::Render PRESSED id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f})",
-            m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height);
-        spdlog::default_logger()->flush();
-    }
+    // if (m_pressed && m_id.find("HeroBtn") != std::string::npos) {
+    //     LOG_INFO("CPanel2D::Render PRESSED id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f})",
+    //         m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height);
+    //     spdlog::default_logger()->flush();
+    // }
     
     // Debug: log first few panel renders
-    static int renderLogCount = 0;
-    if (renderLogCount < 10) {
-        bool hasBg = m_computedStyle.backgroundColor.has_value();
-        bool hasInlineBg = m_inlineStyle.backgroundColor.has_value();
-        LOG_INFO("CPanel2D::Render id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f}) hasBg={} hasInlineBg={}",
-            m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height,
-            hasBg, hasInlineBg);
-        renderLogCount++;
-    }
+    // static int renderLogCount = 0;
+    // if (renderLogCount < 10) {
+    //     bool hasBg = m_computedStyle.backgroundColor.has_value();
+    //     bool hasInlineBg = m_inlineStyle.backgroundColor.has_value();
+    //     LOG_INFO("CPanel2D::Render id='{}' bounds=({:.0f},{:.0f},{:.0f},{:.0f}) hasBg={} hasInlineBg={}",
+    //         m_id, m_actualBounds.x, m_actualBounds.y, m_actualBounds.width, m_actualBounds.height,
+    //         hasBg, hasInlineBg);
+    //     renderLogCount++;
+    // }
     
     // Draw background
     if (m_computedStyle.backgroundColor.has_value()) {
@@ -797,10 +825,10 @@ bool CPanel2D::OnMouseDown(f32 x, f32 y, i32 button) {
         m_pressed = true;
 
         // Debug: log the final hit target for mouse down (high signal; only logs for the handled panel).
-        const char* parentId = (m_parent ? m_parent->GetID().c_str() : "<null>");
-        LOG_INFO("MouseDown HIT id='{}' type='{}' this={} parent='{}' depth={} pos=({:.0f},{:.0f})",
-            m_id, GetPanelTypeName(), static_cast<const void*>(this), parentId, s_mouseDownDepth, x, y);
-        spdlog::default_logger()->flush();
+        // const char* parentId = (m_parent ? m_parent->GetID().c_str() : "<null>");
+        // LOG_INFO("MouseDown HIT id='{}' type='{}' this={} parent='{}' depth={} pos=({:.0f},{:.0f})",
+        //     m_id, GetPanelTypeName(), static_cast<const void*>(this), parentId, s_mouseDownDepth, x, y);
+        // spdlog::default_logger()->flush();
         
         // Set focus via CUIEngine so it tracks the focused panel
         Panorama::CUIEngine::Instance().SetFocus(this);
@@ -828,10 +856,10 @@ bool CPanel2D::OnMouseUp(f32 x, f32 y, i32 button) {
     m_pressed = false;
     
     // Debug logging only for hero buttons that were pressed
-    if (wasPressed && m_id.find("HeroBtn") != std::string::npos) {
-        LOG_INFO("OnMouseUp id='{}' wasPressed=true pos=({:.0f},{:.0f})", m_id, x, y);
-        spdlog::default_logger()->flush();
-    }
+    // if (wasPressed && m_id.find("HeroBtn") != std::string::npos) {
+    //     LOG_INFO("OnMouseUp id='{}' wasPressed=true pos=({:.0f},{:.0f})", m_id, x, y);
+    //     spdlog::default_logger()->flush();
+    // }
     
     // Copy children list - callback may modify the tree
     auto children = m_children;

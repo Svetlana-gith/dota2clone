@@ -92,8 +92,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     Log("=== Game.exe starting ===");
     LOG_INFO("Game.exe starting with spdlog");
     
-    // Get native display resolution
-    GetNativeResolution(g_screenWidth, g_screenHeight);
+    // Set window size for windowed mode (or get native for fullscreen)
+    if (g_fullscreen) {
+        GetNativeResolution(g_screenWidth, g_screenHeight);
+    } else {
+        // Default windowed size - 1280x720 (720p)
+        g_screenWidth = 1280;
+        g_screenHeight = 720;
+    }
     Log(("Resolution: " + std::to_string(g_screenWidth) + "x" + std::to_string(g_screenHeight)).c_str());
     LOG_INFO("Resolution: {}x{}", g_screenWidth, g_screenHeight);
     
@@ -306,15 +312,24 @@ bool InitWindow(HINSTANCE hInstance) {
         w = g_screenWidth;
         h = g_screenHeight;
     } else {
-        // Borderless windowed fullscreen
-        style = WS_POPUP;  // No borders
+        // Windowed mode with title bar and borders, but NO free resize
+        // WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+        // Remove WS_THICKFRAME to disable edge resizing, keep maximize/minimize buttons
+        style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
         exStyle = WS_EX_APPWINDOW;
-        x = 0;
-        y = 0;
-        w = GetSystemMetrics(SM_CXSCREEN);
-        h = GetSystemMetrics(SM_CYSCREEN);
-        g_screenWidth = w;
-        g_screenHeight = h;
+        
+        // Calculate window size to get desired client area
+        RECT windowRect = { 0, 0, static_cast<LONG>(g_screenWidth), static_cast<LONG>(g_screenHeight) };
+        AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+        
+        w = windowRect.right - windowRect.left;
+        h = windowRect.bottom - windowRect.top;
+        
+        // Center window on screen
+        int screenW = GetSystemMetrics(SM_CXSCREEN);
+        int screenH = GetSystemMetrics(SM_CYSCREEN);
+        x = (screenW - w) / 2;
+        y = (screenH - h) / 2;
     }
     
     g_hWnd = CreateWindowExW(
@@ -494,8 +509,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         
         case WM_SIZE:
             if (g_renderer && wParam != SIZE_MINIMIZED) {
-                // Handle resize if needed
-                // TODO: Resize DirectX 12 swap chain
+                UINT width = LOWORD(lParam);
+                UINT height = HIWORD(lParam);
+                if (width > 0 && height > 0) {
+                    g_screenWidth = width;
+                    g_screenHeight = height;
+                    g_renderer->Resize(width, height);
+                    Panorama::CUIEngine::Instance().SetScreenSize((float)width, (float)height);
+                    Game::GameStateManager::Instance().OnResize((float)width, (float)height);
+                }
             }
             return 0;
     }

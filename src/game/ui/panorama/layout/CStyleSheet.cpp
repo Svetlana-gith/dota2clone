@@ -334,9 +334,8 @@ static std::filesystem::path ResolveResourcePath(const std::string& rawPath) {
 
 bool CStyleSheet::LoadFromFile(const std::string& path) {
     // Load CSS file (with minimal @import support) and Parse().
-    // Logging here is intentionally verbose: it helps diagnose working-directory/resource-path issues.
-    LOG_INFO("CStyleSheet::LoadFromFile request='{}' cwd='{}'",
-        path, std::filesystem::current_path().u8string());
+    // LOG_INFO("CStyleSheet::LoadFromFile request='{}' cwd='{}'",
+    //     path, std::filesystem::current_path().u8string());
 
     Clear();
     std::unordered_set<std::string> visited;
@@ -351,8 +350,8 @@ bool CStyleSheet::LoadFromFile(const std::string& path) {
         }
         visited.insert(key);
 
-        LOG_INFO("CStyleSheet::LoadFromFile opening css='{}' resolved='{}'",
-            p.u8string(), resolved.u8string());
+        // LOG_INFO("CStyleSheet::LoadFromFile opening css='{}' resolved='{}'",
+        //     p.u8string(), resolved.u8string());
 
         std::ifstream file(resolved);
         if (!file.is_open()) {
@@ -400,10 +399,11 @@ bool CStyleSheet::LoadFromFile(const std::string& path) {
                 if (!okImp) {
                     LOG_WARN("CStyleSheet::LoadFromFile @import failed target='{}' from='{}' -> resolved='{}'",
                         target, resolved.u8string(), impPath.u8string());
-                } else {
-                    LOG_INFO("CStyleSheet::LoadFromFile @import ok target='{}' from='{}' -> resolved='{}'",
-                        target, resolved.u8string(), impPath.u8string());
                 }
+                // else {
+                //     LOG_INFO("CStyleSheet::LoadFromFile @import ok target='{}' from='{}' -> resolved='{}'",
+                //         target, resolved.u8string(), impPath.u8string());
+                // }
             } else {
                 LOG_WARN("CStyleSheet::LoadFromFile malformed @import stmt='{}' (in '{}')",
                     stmt, resolved.u8string());
@@ -419,19 +419,29 @@ bool CStyleSheet::LoadFromFile(const std::string& path) {
             return false;
         }
 
-        LOG_INFO("CStyleSheet::LoadFromFile parsed resolved='{}' (rules={}, animations={})",
-            resolved.u8string(), (int)m_rules.size(), (int)m_animations.size());
+        // LOG_INFO("CStyleSheet::LoadFromFile parsed resolved='{}' (rules={}, animations={})",
+        //     resolved.u8string(), (int)m_rules.size(), (int)m_animations.size());
         return true;
     };
 
     bool ok = loadInternal(std::filesystem::path(path));
-    LOG_INFO("CStyleSheet::LoadFromFile done request='{}' -> {} (total rules={}, animations={})",
-        path, ok ? "OK" : "FAILED", (int)m_rules.size(), (int)m_animations.size());
+    // LOG_INFO("CStyleSheet::LoadFromFile done request='{}' -> {} (total rules={}, animations={})",
+    //     path, ok ? "OK" : "FAILED", (int)m_rules.size(), (int)m_animations.size());
     return ok;
 }
 
 StyleProperties CStyleSheet::ComputeStyle(const CPanel2D* panel) const {
     StyleProperties result;
+    
+    // Debug: log matching attempt
+    // static int computeLogCount = 0;
+    // if (computeLogCount < 20 && panel) {
+    //     LOG_INFO("CStyleSheet::ComputeStyle panel id='{}' class='{}' totalRules={}",
+    //         panel->GetID(), 
+    //         panel->HasClass("LoginInput") ? "LoginInput" : (panel->HasClass("FieldLabel") ? "FieldLabel" : "none"),
+    //         m_rules.size());
+    //     computeLogCount++;
+    // }
     
     // Collect matching rules
     std::vector<const StyleRule*> matchingRules;
@@ -440,6 +450,12 @@ StyleProperties CStyleSheet::ComputeStyle(const CPanel2D* panel) const {
             matchingRules.push_back(&rule);
         }
     }
+    
+    // Debug: log matched rules count
+    // if (computeLogCount <= 20 && panel && !matchingRules.empty()) {
+    //     LOG_INFO("CStyleSheet::ComputeStyle panel id='{}' matchedRules={}", 
+    //         panel->GetID(), matchingRules.size());
+    // }
     
     // Sort by specificity, then source order
     std::sort(matchingRules.begin(), matchingRules.end(),
@@ -732,6 +748,18 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
             if (propValue == "center") props.verticalTextAlign = VerticalAlign::Center;
             else if (propValue == "bottom") props.verticalTextAlign = VerticalAlign::Bottom;
             else props.verticalTextAlign = VerticalAlign::Top;
+        } else if (propName == "x") {
+            props.x = ParseLength(propValue);
+        } else if (propName == "y") {
+            props.y = ParseLength(propValue);
+        } else if (propName == "padding-left") {
+            props.paddingLeft = ParseLength(propValue);
+        } else if (propName == "padding-right") {
+            props.paddingRight = ParseLength(propValue);
+        } else if (propName == "padding-top") {
+            props.paddingTop = ParseLength(propValue);
+        } else if (propName == "padding-bottom") {
+            props.paddingBottom = ParseLength(propValue);
         }
         // Add more property parsing as needed
     }

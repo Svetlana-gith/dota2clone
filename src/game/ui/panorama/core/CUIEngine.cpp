@@ -96,8 +96,8 @@ void CUIEngine::LoadLayoutAsync(const std::string& path, CPanel2D* parent,
 
 void CUIEngine::LoadStyleSheet(const std::string& path) {
     // Route all global styling through CStyleManager so panels compute styles consistently.
-    LOG_INFO("CUIEngine::LoadStyleSheet('{}') cwd='{}'",
-        path, std::filesystem::current_path().u8string());
+    // LOG_INFO("CUIEngine::LoadStyleSheet('{}') cwd='{}'",
+    //     path, std::filesystem::current_path().u8string());
     CStyleManager::Instance().LoadGlobalStyles(path);
     if (m_root) m_root->InvalidateStyle();
 }
@@ -242,8 +242,8 @@ void CUIEngine::OnMouseMove(f32 x, f32 y) {
 }
 
 void CUIEngine::OnMouseDown(f32 x, f32 y, i32 button) {
-    LOG_INFO("CUIEngine::OnMouseDown pos=({:.0f},{:.0f}) button={}", x, y, button);
-    spdlog::default_logger()->flush();
+    // LOG_INFO("CUIEngine::OnMouseDown pos=({:.0f},{:.0f}) button={}", x, y, button);
+    // spdlog::default_logger()->flush();
     
     m_mouseX = x;
     m_mouseY = y;
@@ -254,18 +254,18 @@ void CUIEngine::OnMouseDown(f32 x, f32 y, i32 button) {
 }
 
 void CUIEngine::OnMouseUp(f32 x, f32 y, i32 button) {
-    LOG_INFO("CUIEngine::OnMouseUp START pos=({:.0f},{:.0f}) button={}", x, y, button);
-    spdlog::default_logger()->flush();
+    // LOG_INFO("CUIEngine::OnMouseUp START pos=({:.0f},{:.0f}) button={}", x, y, button);
+    // spdlog::default_logger()->flush();
     
     m_mouseX = x;
     m_mouseY = y;
     
     if (m_root) {
-        LOG_INFO("CUIEngine::OnMouseUp calling root->OnMouseUp");
-        spdlog::default_logger()->flush();
+        // LOG_INFO("CUIEngine::OnMouseUp calling root->OnMouseUp");
+        // spdlog::default_logger()->flush();
         m_root->OnMouseUp(x, y, button);
-        LOG_INFO("CUIEngine::OnMouseUp root->OnMouseUp returned");
-        spdlog::default_logger()->flush();
+        // LOG_INFO("CUIEngine::OnMouseUp root->OnMouseUp returned");
+        // spdlog::default_logger()->flush();
     }
 }
 

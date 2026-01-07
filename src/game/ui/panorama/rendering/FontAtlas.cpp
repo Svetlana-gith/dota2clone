@@ -401,7 +401,7 @@ bool FontAtlas::Generate(ID3D12Device* device, ID3D12CommandQueue* commandQueue,
         }
         const double avg = finalAtlas.empty() ? 0.0 : (double)sum / (double)finalAtlas.size();
         const double pct = finalAtlas.empty() ? 0.0 : (100.0 * (double)nonZero / (double)finalAtlas.size());
-        LOG_INFO("Font atlas stats: min={} max={} avg={:.2f} nonZero={:.2f}%", (int)minV, (int)maxV, avg, pct);
+        // LOG_INFO("Font atlas stats: min={} max={} avg={:.2f} nonZero={:.2f}%", (int)minV, (int)maxV, avg, pct);
     }
     
     // Sanity-check: if common glyphs ended up with 0 size, packing likely failed or atlas is too small.
@@ -426,8 +426,8 @@ bool FontAtlas::Generate(ID3D12Device* device, ID3D12CommandQueue* commandQueue,
         return false;
     }
     
-    LOG_INFO("Font atlas generated: {} glyphs (latin={}, cyrillic={}), {}x{}, SDF={}",
-             totalGlyphs, latinCount, cyrCount, atlasSize, atlasSize, useSDF);
+    // LOG_INFO("Font atlas generated: {} glyphs (latin={}, cyrillic={}), {}x{}, SDF={}",
+    //          totalGlyphs, latinCount, cyrCount, atlasSize, atlasSize, useSDF);
     
     return true;
 }

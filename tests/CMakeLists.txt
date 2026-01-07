@@ -21,6 +21,7 @@ add_executable(auth_tests
     test_auth_protocol.cpp
     test_auth_client.cpp
     test_matchmaking_auth.cpp
+    test_login_validation.cpp
 )
 
 target_link_libraries(auth_tests

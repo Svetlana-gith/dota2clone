@@ -153,28 +153,27 @@ void CUIRenderer::Flush() {
 void CUIRenderer::FlushBatch() {
     if (m_vertices.empty() || !m_commandList || !m_pipelineState) {
         // Log why we're skipping
-        static int skipCount = 0;
-        if (skipCount < 5) {
-            LOG_INFO("FlushBatch skipped: vertices={} cmdList={} pso={}", 
-                m_vertices.size(), (void*)m_commandList, (void*)m_pipelineState.Get());
-            skipCount++;
-        }
+        // static int skipCount = 0;
+        // if (skipCount < 5) {
+        //     LOG_INFO("FlushBatch skipped: vertices={} cmdList={} pso={}", 
+        //         m_vertices.size(), (void*)m_commandList, (void*)m_pipelineState.Get());
+        //     skipCount++;
+        // }
         return;
     }
     
     // Log first few flushes
-    static int flushCount = 0;
-    if (flushCount < 5) {
-        // Log first vertex color for debugging
-        if (!m_vertices.empty()) {
-            auto& v = m_vertices[0];
-            LOG_INFO("FlushBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
-                m_vertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
-        } else {
-            LOG_INFO("FlushBatch: {} vertices, frame {}", m_vertices.size(), m_currentFrameIndex);
-        }
-        flushCount++;
-    }
+    // static int flushCount = 0;
+    // if (flushCount < 5) {
+    //     if (!m_vertices.empty()) {
+    //         auto& v = m_vertices[0];
+    //         LOG_INFO("FlushBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
+    //             m_vertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
+    //     } else {
+    //         LOG_INFO("FlushBatch: {} vertices, frame {}", m_vertices.size(), m_currentFrameIndex);
+    //     }
+    //     flushCount++;
+    // }
     
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
@@ -252,19 +251,18 @@ void CUIRenderer::FlushTextBatch() {
     if (!m_currentFont) return;
 
     // Log text batch flush
-    static int textFlushCount = 0;
-    if (textFlushCount < 5) {
-        if (!m_textVertices.empty()) {
-            auto& v = m_textVertices[0];
-            LOG_INFO("FlushTextBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
-                m_textVertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
-        } else {
-            LOG_INFO("FlushTextBatch: {} vertices, frame {}", m_textVertices.size(), m_currentFrameIndex);
-        }
-        textFlushCount++;
-    }
+    // static int textFlushCount = 0;
+    // if (textFlushCount < 5) {
+    //     if (!m_textVertices.empty()) {
+    //         auto& v = m_textVertices[0];
+    //         LOG_INFO("FlushTextBatch: {} vertices, frame {}, first vertex color=({:.2f},{:.2f},{:.2f},{:.2f})", 
+    //             m_textVertices.size(), m_currentFrameIndex, v.r, v.g, v.b, v.a);
+    //     } else {
+    //         LOG_INFO("FlushTextBatch: {} vertices, frame {}", m_textVertices.size(), m_currentFrameIndex);
+    //     }
+    //     textFlushCount++;
+    // }
 
-    // Log EVERY flush to diagnose batching issues
     // Use current frame's vertex buffer
     auto& vertexBuffer = m_vertexBuffers[m_currentFrameIndex];
     
@@ -833,14 +831,14 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
                 continue;
             }
 
-            if (!s_loggedFirstGlyph) {
-                s_loggedFirstGlyph = true;
-                LOG_INFO("DrawText first glyph: cp=U+{:04X} w={} h={} u0={:.4f} v0={:.4f} u1={:.4f} v1={:.4f} bounds=({:.1f},{:.1f},{:.1f},{:.1f})",
-                    (uint32_t)cp,
-                    glyph->width, glyph->height,
-                    glyph->u0, glyph->v0, glyph->u1, glyph->v1,
-                    bounds.x, bounds.y, bounds.width, bounds.height);
-            }
+            // if (!s_loggedFirstGlyph) {
+            //     s_loggedFirstGlyph = true;
+            //     LOG_INFO("DrawText first glyph: cp=U+{:04X} w={} h={} u0={:.4f} v0={:.4f} u1={:.4f} v1={:.4f} bounds=({:.1f},{:.1f},{:.1f},{:.1f})",
+            //         (uint32_t)cp,
+            //         glyph->width, glyph->height,
+            //         glyph->u0, glyph->v0, glyph->u1, glyph->v1,
+            //         bounds.x, bounds.y, bounds.width, bounds.height);
+            // }
             
             // Calculate glyph position (keep per-glyph Y fractional to avoid jitter).
             float glyphX = cursorX + glyph->offsetX * geomScale;
@@ -933,26 +931,108 @@ void CUIRenderer::DrawText(const std::string& text, const Rect2D& bounds, const 
 }
 
 Vector2D CUIRenderer::MeasureText(const std::string& text, const FontInfo& font) {
-    if (text.empty() || !m_dwriteFactory) {
+    if (text.empty()) {
         return {0, font.size};
+    }
+    
+    // Try to use font atlas measurement (same as DrawText) for consistency
+    const float roundedSize = std::max(1.0f, std::round(font.size));
+    const float geomScale = (kSdfBaseFontSizePx > 0.0f) ? (roundedSize / kSdfBaseFontSizePx) : 1.0f;
+    
+    FontAtlas* fontAtlas = FontManager::Instance().GetFont(font.family, kSdfBaseFontSizePx);
+    if (fontAtlas) {
+        // Use same measurement logic as DrawText for consistency
+        const float letterSpacing = std::max(0.0f, font.letterSpacing);
+        
+        float maxWidth = 0.0f;
+        float lineWidth = 0.0f;
+        float height = fontAtlas->GetLineHeight() * geomScale;
+        bool firstInLine = true;
+        
+        const FontGlyph* spaceGlyph = fontAtlas->GetGlyph((uint32_t)' ');
+        const float spaceAdvanceBase = spaceGlyph ? spaceGlyph->advance : (fontAtlas->GetFontSize() * 0.5f);
+        const float spaceAdvance = spaceAdvanceBase * geomScale;
+        
+        // UTF-8 decoder
+        auto nextCodepoint = [](const std::string& s, size_t& i) -> uint32_t {
+            const size_t n = s.size();
+            if (i >= n) return 0;
+            const uint8_t c0 = static_cast<uint8_t>(s[i]);
+            if (c0 < 0x80) { i += 1; return c0; }
+            if ((c0 & 0xE0) == 0xC0 && i + 1 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                if ((c1 & 0xC0) == 0x80) { i += 2; return ((c0 & 0x1F) << 6) | (c1 & 0x3F); }
+            }
+            if ((c0 & 0xF0) == 0xE0 && i + 2 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+                if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80)) {
+                    i += 3; return ((c0 & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F);
+                }
+            }
+            if ((c0 & 0xF8) == 0xF0 && i + 3 < n) {
+                const uint8_t c1 = static_cast<uint8_t>(s[i + 1]);
+                const uint8_t c2 = static_cast<uint8_t>(s[i + 2]);
+                const uint8_t c3 = static_cast<uint8_t>(s[i + 3]);
+                if (((c1 & 0xC0) == 0x80) && ((c2 & 0xC0) == 0x80) && ((c3 & 0xC0) == 0x80)) {
+                    i += 4; return ((c0 & 0x07) << 18) | ((c1 & 0x3F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+                }
+            }
+            i += 1; return 0xFFFD;
+        };
+        
+        size_t i = 0;
+        while (i < text.size()) {
+            const uint32_t cp = nextCodepoint(text, i);
+            if (cp == '\r') continue;
+            if (cp == '\n') {
+                maxWidth = std::max(maxWidth, lineWidth);
+                lineWidth = 0.0f;
+                height += fontAtlas->GetLineHeight() * geomScale;
+                firstInLine = true;
+                continue;
+            }
+            
+            if (!firstInLine) lineWidth += letterSpacing;
+            firstInLine = false;
+            
+            if (cp == '\t') {
+                lineWidth += spaceAdvance * 4.0f;
+                continue;
+            }
+            
+            const FontGlyph* g = fontAtlas->GetGlyph(cp);
+            if (g) {
+                const float minAdvance = std::max(0.0f, (g->offsetX + g->width) * geomScale);
+                lineWidth += std::max(g->advance * geomScale, minAdvance);
+            } else {
+                lineWidth += spaceAdvance;
+            }
+        }
+        
+        maxWidth = std::max(maxWidth, lineWidth);
+        return { maxWidth, height };
+    }
+    
+    // Fallback to DirectWrite measurement
+    if (!m_dwriteFactory) {
+        return {text.length() * font.size * 0.6f, font.size};
     }
     
     IDWriteTextFormat* textFormat = GetOrCreateTextFormat(font);
     if (!textFormat) {
-        // Fallback estimation
         return {text.length() * font.size * 0.6f, font.size};
     }
     
     std::wstring wtext = ToWideString(text);
     
-    // Create text layout for measurement
     ComPtr<IDWriteTextLayout> textLayout;
     HRESULT hr = m_dwriteFactory->CreateTextLayout(
         wtext.c_str(),
         static_cast<UINT32>(wtext.length()),
         textFormat,
-        10000.0f,  // Max width
-        10000.0f,  // Max height
+        10000.0f,
+        10000.0f,
         textLayout.GetAddressOf()
     );
     
@@ -966,7 +1046,13 @@ Vector2D CUIRenderer::MeasureText(const std::string& text, const FontInfo& font)
         return {text.length() * font.size * 0.6f, font.size};
     }
     
-    return {metrics.width, metrics.height};
+    // Add letterSpacing for DirectWrite fallback
+    f32 extraWidth = 0.0f;
+    if (font.letterSpacing > 0.0f && text.length() > 1) {
+        extraWidth = font.letterSpacing * (text.length() - 1);
+    }
+    
+    return {metrics.width + extraWidth, metrics.height};
 }
 
 f32 CUIRenderer::MeasureTextWidth(const std::string& text, const FontInfo& font) {

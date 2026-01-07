@@ -63,17 +63,17 @@ void CButton::SetOnActivate(std::function<void()> handler) {
 }
 
 bool CButton::OnMouseUp(f32 x, f32 y, i32 button) {
-    LOG_INFO("CButton::OnMouseUp START id='{}'", m_id);
+    // LOG_INFO("CButton::OnMouseUp START id='{}'", m_id);
     
     bool wasPressed = m_pressed;
     bool inPanel = IsPointInPanel(x, y);
     bool result = CPanel2D::OnMouseUp(x, y, button);
     
-    LOG_INFO("CButton::OnMouseUp id='{}' wasPressed={} inPanel={} hasCallback={}", 
-             m_id, wasPressed, inPanel, m_onActivate ? true : false);
+    // LOG_INFO("CButton::OnMouseUp id='{}' wasPressed={} inPanel={} hasCallback={}", 
+    //          m_id, wasPressed, inPanel, m_onActivate ? true : false);
     
     if (wasPressed && inPanel && button == 0 && m_onActivate) {
-        LOG_INFO("CButton::OnMouseUp CALLING CALLBACK for '{}'", m_id);
+        // LOG_INFO("CButton::OnMouseUp CALLING CALLBACK for '{}'", m_id);
         auto callback = m_onActivate;
         callback();
         return true;
