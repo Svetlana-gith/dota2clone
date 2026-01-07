@@ -115,15 +115,17 @@ void LoginState::CreateUI() {
 
     // Loading overlay (styled by #LoadingOverlay in CSS)
     m_ui->loadingOverlay = std::make_shared<Panorama::CPanel2D>("LoadingOverlay");
-    m_ui->loadingOverlay->GetStyle().width = Panorama::Length::Fill();
-    m_ui->loadingOverlay->GetStyle().height = Panorama::Length::Fill();
+    m_ui->loadingOverlay->GetStyle().x = Panorama::Length::Px(0);
+    m_ui->loadingOverlay->GetStyle().y = Panorama::Length::Px(0);
+    m_ui->loadingOverlay->GetStyle().width = Panorama::Length::Pct(100);
+    m_ui->loadingOverlay->GetStyle().height = Panorama::Length::Pct(100);
     m_ui->loadingOverlay->SetVisible(false);
     m_ui->root->AddChild(m_ui->loadingOverlay);
     
     // Loading label (styled by #LoadingLabel in CSS)
     m_ui->loadingLabel = std::make_shared<Panorama::CLabel>("Connecting...", "LoadingLabel");
-    m_ui->loadingLabel->GetStyle().marginLeft = Panorama::Length::Px(std::round((sw - 150.0f) / 2));
-    m_ui->loadingLabel->GetStyle().marginTop = Panorama::Length::Px(std::round(sh / 2));
+    m_ui->loadingLabel->GetStyle().x = Panorama::Length::Pct(42);
+    m_ui->loadingLabel->GetStyle().y = Panorama::Length::Pct(48);
     m_ui->loadingOverlay->AddChild(m_ui->loadingLabel);
     
     // Set initial focus to username field
