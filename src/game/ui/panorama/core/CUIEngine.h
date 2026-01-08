@@ -66,6 +66,11 @@ public:
     void LoadStyleSheet(const std::string& path);
     void ApplyGlobalStyles();
     
+    // ============ Hot Reload ============
+    void EnableHotReload(bool enabled = true);
+    void WatchStyleSheet(const std::string& path);
+    bool IsHotReloadEnabled() const;
+    
     // ============ Panel Lookup ============
     CPanel2D* FindPanelByID(const std::string& id);
     std::vector<CPanel2D*> FindPanelsByClass(const std::string& className);

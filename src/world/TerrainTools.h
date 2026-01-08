@@ -5,7 +5,7 @@
 
 namespace WorldEditor::TerrainTools {
 
-// --- Tile-based Terrain (Dota 2 Workshop Tools style) ---
+// --- Tile-based Terrain (workshop tools style) ---
 // Terrain uses discrete height levels (multiples of `TerrainComponent::heightStep`)
 // on a regular grid. Rendering uses `heightmap` (float) derived from `heightLevels`.
 
@@ -17,6 +17,10 @@ void initTileTerrain(
     f32 tileSize = 128.0f,
     f32 heightStep = 128.0f
 );
+
+// Generate a baseline height layout for a newly-initialized tile terrain.
+// This modifies `heightLevels` and syncs `heightmap`.
+void generateHeights(TerrainComponent& terrain);
 
 // Sync float heightmap from discrete heightLevels.
 // If `minAffected/maxAffected` are (0,0), syncs the whole map.
@@ -49,7 +53,7 @@ ModificationResult applyTileSetLevelBrush(
     i32 radiusTiles
 );
 
-// Enforce Dota-like cliff constraints: max |deltaLevels| between adjacent vertices.
+// Enforce cliff constraints: max |deltaLevels| between adjacent vertices.
 // Operates in-place on `heightLevels` and returns affected bounds.
 ModificationResult enforceCliffConstraints(
     TerrainComponent& terrain,

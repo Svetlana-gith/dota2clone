@@ -25,10 +25,7 @@ void LoginForm::Create(Panorama::CPanel2D* parent, f32 screenWidth, f32 screenHe
     
     // Container for form elements (styled by #LoginFormContainer in CSS)
     m_container = std::make_shared<Panorama::CPanel2D>("LoginFormContainer");
-    m_container->GetStyle().x = Panorama::Length::Pct(containerX);
-    m_container->GetStyle().y = Panorama::Length::Pct(containerY);
-    m_container->GetStyle().width = Panorama::Length::Pct(containerWidthPct);
-    m_container->GetStyle().height = Panorama::Length::Pct(containerHeightPct);
+    // NOTE: Size and position managed by CSS Flexbox
     parent->AddChild(m_container);
     
     // Layout constants (percentages relative to container)

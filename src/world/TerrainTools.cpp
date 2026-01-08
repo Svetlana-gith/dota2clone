@@ -27,11 +27,11 @@ void initTileTerrain(TerrainComponent& terrain, i32 tilesX, i32 tilesZ, f32 tile
     terrain.heightStep = heightStep;
 
     // NOTE: current TerrainMesh assumes square `size` for X and Z.
-    // For now (Dota-like grid) we use square maps (tilesX == tilesZ).
+    // For now we use square maps (tilesX == tilesZ).
     terrain.resolution = Vec2i(tilesX + 1, tilesZ + 1);
     terrain.size = static_cast<f32>(tilesX) * tileSize;
 
-    // Dota 2 Tile Editor allows many steps, but for MVP keep a safe positive range.
+    // The tile editor allows many steps, but for MVP keep a safe positive range.
     terrain.minHeight = 0.0f;
     terrain.maxHeight = 15.0f * heightStep; // 15 steps above base
 
@@ -50,6 +50,88 @@ void initTileTerrain(TerrainComponent& terrain, i32 tilesX, i32 tilesZ, f32 tile
     if (rampSize > 0 && rampSize < 1000000) { // Safety: reasonable limit
         terrain.rampMask.assign(rampSize, static_cast<u8>(0));
     }
+}
+
+void generateHeights(TerrainComponent& terrain) {
+    const int w = std::max(2, terrain.resolution.x);
+    const int h = std::max(2, terrain.resolution.y);
+    const size_t wanted = static_cast<size_t>(w) * static_cast<size_t>(h);
+    if (terrain.heightLevels.size() != wanted) {
+        terrain.heightLevels.assign(wanted, static_cast<i16>(0));
+    }
+
+    const float ts = std::max(1.0f, terrain.tileSize);
+
+    auto raisePlateauCircle = [&](const Vec2& centerXZ, f32 radiusWorld, i16 level) {
+        const int cx = static_cast<int>(std::lround(centerXZ.x / ts));
+        const int cz = static_cast<int>(std::lround(centerXZ.y / ts));
+        const int r = static_cast<int>(std::ceil(radiusWorld / ts));
+        const float r2 = radiusWorld * radiusWorld;
+
+        const int minX = std::max(0, cx - r);
+        const int maxX = std::min(w - 1, cx + r);
+        const int minZ = std::max(0, cz - r);
+        const int maxZ = std::min(h - 1, cz + r);
+
+        for (int z = minZ; z <= maxZ; ++z) {
+            for (int x = minX; x <= maxX; ++x) {
+                const float dx = (float(x) - float(cx)) * ts;
+                const float dz = (float(z) - float(cz)) * ts;
+                if (dx * dx + dz * dz > r2) continue;
+                const size_t i = static_cast<size_t>(z) * static_cast<size_t>(w) + static_cast<size_t>(x);
+                terrain.heightLevels[i] = std::max<i16>(terrain.heightLevels[i], level);
+            }
+        }
+    };
+
+    // Two raised plateaus near corners of the map.
+    raisePlateauCircle(Vec2(1600.0f, 1600.0f), 1100.0f, 4);
+    raisePlateauCircle(Vec2(14400.0f, 14400.0f), 1100.0f, 4);
+
+    auto applyWideRamp = [&](const Vec3& start, const Vec3& end, i32 baseWidthTiles) {
+        baseWidthTiles = std::clamp<i32>(baseWidthTiles, 1, 16);
+
+        const Vec2 dir(end.x - start.x, end.z - start.z);
+        const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        if (len < 0.001f) {
+            applyRampPath(terrain, start, end, baseWidthTiles);
+            return;
+        }
+        const Vec2 n(-dir.y / len, dir.x / len);
+
+        // Multiple parallel lines with slightly different widths.
+        const float o1 = ts * 1.0f;
+        const float o2 = ts * 2.0f;
+        applyRampPath(terrain, start, end, baseWidthTiles + 1);
+        applyRampPath(terrain,
+                      Vec3(start.x + n.x * o1, start.y, start.z + n.y * o1),
+                      Vec3(end.x + n.x * o1, end.y, end.z + n.y * o1),
+                      baseWidthTiles);
+        applyRampPath(terrain,
+                      Vec3(start.x - n.x * o1, start.y, start.z - n.y * o1),
+                      Vec3(end.x - n.x * o1, end.y, end.z - n.y * o1),
+                      baseWidthTiles);
+        applyRampPath(terrain,
+                      Vec3(start.x + n.x * o2, start.y, start.z + n.y * o2),
+                      Vec3(end.x + n.x * o2, end.y, end.z + n.y * o2),
+                      std::max<i32>(1, baseWidthTiles - 1));
+        applyRampPath(terrain,
+                      Vec3(start.x - n.x * o2, start.y, start.z - n.y * o2),
+                      Vec3(end.x - n.x * o2, end.y, end.z - n.y * o2),
+                      std::max<i32>(1, baseWidthTiles - 1));
+    };
+
+    applyWideRamp(Vec3(1600.0f, 0.0f, 2000.0f), Vec3(3200.0f, 0.0f, 3200.0f), 4);
+    applyWideRamp(Vec3(14400.0f, 0.0f, 14000.0f), Vec3(12800.0f, 0.0f, 12800.0f), 4);
+
+    enforceCliffConstraints(
+        terrain,
+        Vec2i(0, 0),
+        Vec2i(w - 1, h - 1),
+        3
+    );
+
+    syncHeightmapFromLevels(terrain);
 }
 
 void syncHeightmapFromLevels(TerrainComponent& terrain, const Vec2i& minAffectedIn, const Vec2i& maxAffectedIn) {

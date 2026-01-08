@@ -1,0 +1,413 @@
+/* Login/Register Screen - Modern Flexbox + Tailwind Utilities */
+@import "base.css";
+
+/* ===== Gaming Premium Color Palette ===== */
+/* Background: #0A0E17 - Deep dark blue */
+/* Card: #12161F (95% opacity) - Dark card */
+/* Gold primary: #D4A84B - Main accent */
+/* Gold light: #F5D78E - Hover state */
+/* Gold dark: #8B6914 - Active state */
+/* Cyan accent: #4ECDC4 - Secondary accent */
+/* Text primary: #FFFFFF */
+/* Text secondary: #8892A0 */
+/* Input bg: #1A1F2A */
+/* Input border: #2A3040 */
+/* Error: #FF6B6B */
+
+/* ===== Root Container - Flexbox Layout ===== */
+#LoginRoot {
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  
+  /* Size */
+  width: 100%;
+  height: 100%;
+  
+  /* Style - uses bg-dark from base.css */
+  background-color: rgba(10, 14, 23, 1.0);
+}
+
+/* ===== Header - Flexbox Layout ===== */
+#LoginHeader {
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  
+  /* Size - fixed height for header */
+  width: 420px;
+  height: 80px;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+  flex-shrink: 0;
+  
+  /* Spacing from form */
+  margin-bottom: 24px;
+}
+
+/* ===== Game Logo - Tailwind Style ===== */
+#GameLogo {
+  /* Uses: text-5xl text-gold */
+  color: rgba(212, 168, 75, 1.0);
+  font-size: 48px;
+  flex-grow: 0;
+}
+
+/* ===== Accent Line - Tailwind Style ===== */
+#AccentLine {
+  /* Uses: bg-gold w-32 h-1 opacity-80 */
+  background-color: rgba(212, 168, 75, 0.8);
+  width: 15%;
+  height: 3px;
+  flex-grow: 0;
+}
+
+/* ===== Form Container - Flexbox Layout ===== */
+#LoginFormContainer {
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  
+  /* Size */
+  width: 420px;
+  
+  /* Style - uses bg-card border border-gold rounded-xl from base.css */
+  background-color: rgba(18, 22, 31, 0.95);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: rgba(212, 168, 75, 0.3);
+  
+  /* Spacing - uses p-8 from base.css */
+  padding-left: 32px;
+  padding-right: 32px;
+  padding-top: 24px;
+  padding-bottom: 24px;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+/* ===== Form Title - Tailwind Style ===== */
+#FormTitle {
+  /* Uses: text-3xl text-white font-semibold */
+  width: 100%;
+  height: 36px;
+  color: rgba(255, 255, 255, 1.0);
+  font-size: 28px;
+  flex-grow: 0;
+}
+
+/* ===== Field Group - Flexbox Layout ===== */
+.FieldGroup {
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  
+  /* Size */
+  width: 100%;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+}
+
+/* ===== Field Labels - Tailwind Style ===== */
+.FieldLabel {
+  /* Uses: text-sm text-gray */
+  width: 100%;
+  height: 20px;
+  color: rgba(136, 146, 160, 1.0);
+  font-size: 14px;
+  flex-grow: 0;
+}
+
+/* ===== Confirm Password Label (RegisterForm) ===== */
+#ConfirmPasswordLabel {
+  /* Uses: text-sm text-gray */
+  width: 100%;
+  color: rgba(136, 146, 160, 1.0);
+  font-size: 14px;
+  flex-grow: 0;
+}
+
+/* ===== Text Inputs - Tailwind Style ===== */
+.LoginInput {
+  /* Uses: bg-input border-2 border-input rounded-lg px-4 text-lg text-white */
+  width: 100%;
+  height: 48px;
+  background-color: rgba(26, 31, 42, 1.0);
+  border-radius: 8px;
+  border-width: 2px;
+  border-color: rgba(42, 48, 64, 1.0);
+  padding-left: 16px;
+  font-size: 17px;
+  color: rgba(255, 255, 255, 1.0);
+  flex-grow: 0;
+}
+
+.LoginInput:focus {
+  /* Uses: focus:border-gold */
+  border-color: rgba(212, 168, 75, 0.8);
+}
+
+/* ===== Confirm Password Input (RegisterForm) ===== */
+#ConfirmPasswordInput {
+  /* Uses: bg-input border-2 border-input rounded-lg px-4 text-lg text-white */
+  width: 100%;
+  height: 48px;
+  background-color: rgba(26, 31, 42, 1.0);
+  border-radius: 8px;
+  border-width: 2px;
+  border-color: rgba(42, 48, 64, 1.0);
+  padding-left: 16px;
+  font-size: 17px;
+  color: rgba(255, 255, 255, 1.0);
+  flex-grow: 0;
+}
+
+#ConfirmPasswordInput:focus {
+  /* Uses: focus:border-gold */
+  border-color: rgba(212, 168, 75, 0.8);
+}
+
+/* ===== Error Label - Flexbox + Tailwind ===== */
+#ErrorLabel {
+  /* Layout */
+  display: flex;
+  align-items: center;
+  
+  /* Size */
+  width: 100%;
+  height: 52px;
+  
+  /* Style - uses bg-error border-l-4 border-error rounded text-error from base.css */
+  background-color: rgba(255, 107, 107, 0.15);
+  border-left-width: 3px;
+  border-color: rgba(255, 107, 107, 1.0);
+  border-radius: 6px;
+  color: rgba(255, 107, 107, 1.0);
+  font-size: 15px;
+  
+  /* Spacing - uses px-3 from base.css */
+  padding-left: 12px;
+  padding-right: 12px;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+}
+
+/* ===== RegisterForm Specific Styles ===== */
+.RegisterForm {
+  /* Inherits from #LoginFormContainer, no additional styles needed */
+}
+
+.RegisterError {
+  /* Same as #ErrorLabel, no additional styles needed */
+}
+
+.RegisterPrimary {
+  /* Same as #PrimaryButton, no additional styles needed */
+}
+
+.RegisterSecondary {
+  /* Same as #SecondaryButton, no additional styles needed */
+}
+
+/* ===== Button Group - Flexbox Layout ===== */
+.ButtonGroup {
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  
+  /* Size */
+  width: 100%;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+}
+
+/* ===== Primary Button - Tailwind Style ===== */
+#PrimaryButton {
+  /* Uses: bg-gold rounded-lg text-lg font-semibold text-dark */
+  width: 100%;
+  height: 52px;
+  background-color: rgba(212, 168, 75, 1.0);
+  border-radius: 8px;
+  font-size: 18px;
+  color: rgba(10, 14, 23, 1.0);
+  flex-grow: 0;
+}
+
+#PrimaryButton:hover {
+  /* Uses: hover:bg-gold-light */
+  background-color: rgba(245, 215, 142, 1.0);
+}
+
+#PrimaryButton:active {
+  /* Uses: active:bg-gold-dark */
+  background-color: rgba(139, 105, 20, 1.0);
+}
+
+/* ===== Secondary Button - Tailwind Style ===== */
+#SecondaryButton {
+  /* Uses: bg-card border-2 border-cyan rounded-lg text-cyan */
+  width: 100%;
+  height: 48px;
+  background-color: rgba(42, 48, 64, 1.0);
+  border-radius: 8px;
+  border-width: 1px;
+  border-color: rgba(78, 205, 196, 0.5);
+  font-size: 16px;
+  color: rgba(78, 205, 196, 1.0);
+  flex-grow: 0;
+}
+
+#SecondaryButton:hover {
+  /* Uses: hover:bg-card-light hover:border-cyan-light */
+  background-color: rgba(52, 58, 74, 1.0);
+  border-color: rgba(78, 205, 196, 0.8);
+}
+
+#SecondaryButton:active {
+  /* Uses: active:bg-card-dark */
+  background-color: rgba(32, 38, 54, 1.0);
+}
+
+/* ===== Footer - Flexbox Layout ===== */
+#LoginFooter {
+  /* Layout */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  
+  /* Size */
+  width: 100%;
+  height: 5%;
+  
+  /* Flex behavior */
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+/* ===== Hint Label - Tailwind Style ===== */
+#HintLabel {
+  /* Uses: text-xs text-muted */
+  color: rgba(102, 102, 102, 1.0);
+  font-size: 12px;
+}
+
+/* ===== Loading Overlay - Flexbox Layout ===== */
+#LoadingOverlay {
+  /* Layout */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  
+  /* Size */
+  width: 100%;
+  height: 100%;
+  
+  /* Style - uses bg-black opacity-80 */
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+/* ===== Loading Label - Tailwind Style ===== */
+#LoadingLabel {
+  /* Uses: text-2xl text-gold */
+  color: rgba(212, 168, 75, 1.0);
+  font-size: 24px;
+}
+
+/* ===== Legacy IDs (for backward compatibility) ===== */
+#LoginBtn {
+  width: 100%;
+  height: 56px;
+  background-color: rgba(212, 168, 75, 1.0);
+  border-radius: 8px;
+  font-size: 18px;
+  color: rgba(10, 14, 23, 1.0);
+}
+
+#LoginBtn:hover {
+  background-color: rgba(245, 215, 142, 1.0);
+}
+
+#GameTitle {
+  color: rgba(212, 168, 75, 1.0);
+  font-size: 48px;
+}
+
+#LoginBox {
+  width: 420px;
+  background-color: rgba(18, 22, 31, 0.95);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: rgba(212, 168, 75, 0.3);
+  padding-left: 32px;
+  padding-right: 32px;
+  padding-top: 24px;
+  padding-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ===== Utility Class Overrides ===== */
+/* These can be used directly in C++ code via AddClass() */
+
+/* Spacing utilities */
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.gap-6 { gap: 24px; }
+
+/* Flex utilities */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-row { flex-direction: row; }
+.items-center { align-items: center; }
+.items-start { align-items: start; }
+.items-end { align-items: end; }
+.justify-center { justify-content: center; }
+.justify-start { justify-content: start; }
+.justify-end { justify-content: end; }
+.justify-between { justify-content: space-between; }
+
+/* Flex item utilities */
+.flex-grow { flex-grow: 1; }
+.flex-grow-0 { flex-grow: 0; }
+.flex-shrink { flex-shrink: 1; }
+.flex-shrink-0 { flex-shrink: 0; }
+
+/* Size utilities */
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+
+/* Text utilities */
+.text-white { color: rgba(255, 255, 255, 1.0); }
+.text-gray { color: rgba(136, 146, 160, 1.0); }
+.text-gold { color: rgba(212, 168, 75, 1.0); }
+.text-cyan { color: rgba(78, 205, 196, 1.0); }
+.text-error { color: rgba(255, 107, 107, 1.0); }
+
+/* Background utilities */
+.bg-dark { background-color: rgba(10, 14, 23, 1.0); }
+.bg-card { background-color: rgba(18, 22, 31, 0.95); }
+.bg-input { background-color: rgba(26, 31, 42, 1.0); }
+.bg-gold { background-color: rgba(212, 168, 75, 1.0); }
+
+/* Border utilities */
+.rounded { border-radius: 6px; }
+.rounded-lg { border-radius: 8px; }
+.rounded-xl { border-radius: 12px; }
+.border { border-width: 1px; }
+.border-2 { border-width: 2px; }

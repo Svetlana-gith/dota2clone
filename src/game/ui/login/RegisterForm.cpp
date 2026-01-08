@@ -27,8 +27,8 @@ void RegisterForm::Create(Panorama::CPanel2D* parent, f32 screenWidth, f32 scree
     // Container for form elements (styled by #LoginFormContainer in CSS - same style as LoginForm)
     m_container = std::make_shared<Panorama::CPanel2D>("LoginFormContainer");
     m_container->AddClass("RegisterForm");
-    m_container->GetStyle().x = Panorama::Length::Pct(containerX);
-    m_container->GetStyle().y = Panorama::Length::Pct(containerY);
+    // NOTE: Position managed by CSS Flexbox parent (#LoginRoot with justify-content: center)
+    // Only set size, not position
     m_container->GetStyle().width = Panorama::Length::Pct(containerWidthPct);
     m_container->GetStyle().height = Panorama::Length::Pct(containerHeightPct);
     parent->AddChild(m_container);

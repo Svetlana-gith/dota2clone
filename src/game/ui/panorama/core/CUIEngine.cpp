@@ -1,4 +1,5 @@
 #include "CUIEngine.h"
+#include "CStyleHotReload.h"
 #include "../layout/CStyleSheet.h"
 #include "../layout/CLayoutFile.h"
 #include "../rendering/CUITextSystem.h"
@@ -160,6 +161,9 @@ void CUIEngine::ClearInputStateForSubtree(CPanel2D* subtreeRoot) {
 }
 
 void CUIEngine::Update(f32 deltaTime) {
+    // Update hot reload system
+    CStyleHotReload::Instance().Update(deltaTime);
+    
     if (m_root) {
         UpdatePanelRecursive(m_root.get(), deltaTime);
     }
@@ -177,6 +181,14 @@ void CUIEngine::Render() {
     
     // Layout pass
     Rect2D screenBounds = {0, 0, m_config.screenWidth, m_config.screenHeight};
+    
+    // Log layout bounds periodically
+    static int layoutCount = 0;
+    layoutCount++;
+    if (layoutCount <= 10 || layoutCount % 1000 == 0) {
+        LOG_INFO("CUIEngine::Render layout pass #{}: screenBounds={}x{}", layoutCount, m_config.screenWidth, m_config.screenHeight);
+    }
+    
     m_root->PerformLayout(screenBounds);
     
     // Set render target for UI renderer (needed after pipeline state changes)
@@ -294,6 +306,8 @@ void CUIEngine::OnTextInput(const std::string& text) {
 }
 
 void CUIEngine::SetScreenSize(f32 width, f32 height) {
+    LOG_INFO("CUIEngine::SetScreenSize({}x{}) - old: {}x{}", width, height, m_config.screenWidth, m_config.screenHeight);
+    
     m_config.screenWidth = width;
     m_config.screenHeight = height;
     
@@ -304,7 +318,9 @@ void CUIEngine::SetScreenSize(f32 width, f32 height) {
     if (m_root) {
         m_root->GetStyle().width = Length::Px(width);
         m_root->GetStyle().height = Length::Px(height);
-        m_root->InvalidateLayout();
+        // Must invalidate STYLE (not just layout) so ComputeStyle() is called
+        // and the new inline width/height values are merged into computedStyle
+        m_root->InvalidateStyle();
     }
 }
 
@@ -374,6 +390,22 @@ void CUIEngine::PlaySound(const std::string& soundName) {
     
     // Would play sound through audio system
     // For now, just a placeholder
+}
+
+// ============ Hot Reload ============
+
+void CUIEngine::EnableHotReload(bool enabled) {
+    CStyleHotReload::Instance().Enable(enabled);
+    LOG_INFO("CUIEngine: Hot reload {}", enabled ? "enabled" : "disabled");
+}
+
+void CUIEngine::WatchStyleSheet(const std::string& path) {
+    CStyleHotReload::Instance().WatchFile(path);
+    LOG_INFO("CUIEngine: Watching stylesheet '{}'", path);
+}
+
+bool CUIEngine::IsHotReloadEnabled() const {
+    return CStyleHotReload::Instance().IsEnabled();
 }
 
 } // namespace Panorama

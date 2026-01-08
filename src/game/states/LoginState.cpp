@@ -51,8 +51,16 @@ LoginState::~LoginState() = default;
 void LoginState::OnEnter() {
     LOG_INFO("LoginState::OnEnter()");
     
-    // Load login stylesheet
-    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login.css");
+    // Load login stylesheet (Flexbox + Tailwind utilities)
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login-modern.css");
+    
+    // Enable hot reload for rapid UI iteration (Debug only)
+    #ifdef _DEBUG
+    Panorama::CUIEngine::Instance().EnableHotReload(true);
+    Panorama::CUIEngine::Instance().WatchStyleSheet("resources/styles/login-modern.css");
+    Panorama::CUIEngine::Instance().WatchStyleSheet("resources/styles/base.css");
+    LOG_INFO("LoginState: Hot reload enabled for CSS files (login-modern.css)");
+    #endif
     
     CreateUI();
     SetupAuthCallbacks();
@@ -85,12 +93,13 @@ void LoginState::CreateUI() {
     
     float sw = engine.GetScreenWidth();
     float sh = engine.GetScreenHeight();
+    LOG_INFO("LoginState::CreateUI() - screen size from engine: {}x{}", sw, sh);
     
     // ROOT - full screen background (styled by #LoginRoot in CSS)
     m_ui->root = std::make_shared<Panorama::CPanel2D>("LoginRoot");
     m_ui->root->GetStyle().width = Panorama::Length::Fill();
     m_ui->root->GetStyle().height = Panorama::Length::Fill();
-    m_ui->root->GetStyle().flowChildren = Panorama::FlowDirection::Down;
+    // NOTE: Layout managed by CSS Flexbox (display: flex, flex-direction: column)
     uiRoot->AddChild(m_ui->root);
     
     // Create modular components
@@ -300,9 +309,16 @@ bool LoginState::OnMouseUp(f32 x, f32 y, i32 button) {
 }
 
 void LoginState::OnResize(f32 width, f32 height) {
+    LOG_INFO("LoginState::OnResize({}x{})", width, height);
+    
     // Recreate UI with new screen dimensions
+    LOG_INFO("LoginState::OnResize - DestroyUI...");
     DestroyUI();
+    
+    LOG_INFO("LoginState::OnResize - CreateUI...");
     CreateUI();
+    
+    LOG_INFO("LoginState::OnResize - Complete");
 }
 
 } // namespace Game

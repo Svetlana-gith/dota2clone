@@ -442,16 +442,30 @@ void InGameState::OnResume() {
 }
 
 void InGameState::UpdateInputState() {
-    // Update keyboard state
+    const bool hasFocus = (g_hWnd != nullptr) && (GetForegroundWindow() == g_hWnd);
+    if (!hasFocus) {
+        for (int i = 0; i < 256; i++) {
+            m_currentInput.keys[i] = false;
+        }
+        m_currentInput.shiftHeld = false;
+        m_currentInput.ctrlHeld = false;
+        m_currentInput.altHeld = false;
+        m_currentInput.leftHeld = false;
+        m_currentInput.rightHeld = false;
+        m_currentInput.mouseInViewport = false;
+        return;
+    }
+
     for (int i = 0; i < 256; i++) {
         m_currentInput.keys[i] = (GetAsyncKeyState(i) & 0x8000) != 0;
     }
     m_currentInput.shiftHeld = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     m_currentInput.ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     m_currentInput.altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-    
-    // Mouse position is updated via OnMouseMove
-    m_currentInput.mouseInViewport = true; // Full screen game
+
+    const Vec2 mousePos = GetMousePosClient(g_hWnd);
+    m_currentInput.mousePos = mousePos;
+    m_currentInput.mouseInViewport = IsMouseInClientRect(g_hWnd, mousePos);
 }
 
 void InGameState::CreateHUD() {

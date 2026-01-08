@@ -168,9 +168,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int frameCount = 0;
     
     MSG msg = {};
+    static int loopCount = 0;
     while (g_running && !g_exitRequested) {
+        loopCount++;
+        if (loopCount <= 10 || loopCount % 1000 == 0) {
+            LOG_INFO("Main loop iteration #{}", loopCount);
+        }
+        
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
+                LOG_INFO("Main loop: WM_QUIT received");
                 g_running = false;
                 break;
             }
@@ -178,6 +185,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DispatchMessage(&msg);
         }
         
+        // Log if we're about to exit
+        if (!g_running) {
+            LOG_INFO("Main loop: g_running=false, exiting");
+            spdlog::default_logger()->flush();
+        }
+        if (g_exitRequested) {
+            LOG_INFO("Main loop: g_exitRequested=true, exiting");
+            spdlog::default_logger()->flush();
+        }
         if (!g_running) break;
         
         // Log first few frames
@@ -380,27 +396,68 @@ void CleanupDirectX() {
 // ============ Render ============
 
 void Render() {
-    if (!g_renderer) return;
+    if (!g_renderer) {
+        LOG_WARN("Render: g_renderer is null");
+        return;
+    }
     
     static int renderCount = 0;
     renderCount++;
-    if (renderCount <= 5) {
-        Log(("Render() call #" + std::to_string(renderCount)).c_str());
+    if (renderCount <= 10 || renderCount % 1000 == 0) {
+        LOG_INFO("Render() call #{}, screen={}x{}", renderCount, g_screenWidth, g_screenHeight);
     }
     
-    // Begin frame
-    g_renderer->BeginFrame();
+    // Skip rendering if minimized
+    if (g_screenWidth == 0 || g_screenHeight == 0) {
+        if (renderCount % 1000 == 0) {
+            LOG_INFO("Render: skipping (minimized)");
+        }
+        return;
+    }
     
-    // Clear and begin rendering to swapchain
-    float clearColor[4] = { 0.02f, 0.04f, 0.08f, 1.0f };  // Dark blue background
-    g_renderer->BeginSwapchainPass(clearColor);
-    
-    // Render game state (includes world and UI)
-    Game::GameStateManager::Instance().Render();
-    
-    // End frame and present
-    g_renderer->EndFrame();
-    g_renderer->Present();
+    try {
+        // Begin frame
+        if (renderCount <= 10 || renderCount % 1000 == 0) {
+            LOG_INFO("Render: calling BeginFrame...");
+        }
+        g_renderer->BeginFrame();
+        
+        if (renderCount <= 10 || renderCount % 1000 == 0) {
+            LOG_INFO("Render: calling BeginSwapchainPass...");
+        }
+        
+        // Clear and begin rendering to swapchain
+        float clearColor[4] = { 0.02f, 0.04f, 0.08f, 1.0f };  // Dark blue background
+        g_renderer->BeginSwapchainPass(clearColor);
+        
+        if (renderCount <= 10 || renderCount % 1000 == 0) {
+            LOG_INFO("Render: calling GameStateManager::Render...");
+        }
+        
+        // Render game state (includes world and UI)
+        Game::GameStateManager::Instance().Render();
+        
+        if (renderCount <= 10 || renderCount % 1000 == 0) {
+            LOG_INFO("Render: calling EndFrame...");
+        }
+        
+        // End frame and present
+        g_renderer->EndFrame();
+        
+        if (renderCount <= 10 || renderCount % 1000 == 0) {
+            LOG_INFO("Render: calling Present...");
+        }
+        g_renderer->Present();
+    } catch (const DirectXException& e) {
+        LOG_ERROR("Render DirectXException: {} (HRESULT: 0x{:08X})", e.what(), (unsigned)e.GetHRESULT());
+        spdlog::default_logger()->flush();
+    } catch (const std::exception& e) {
+        LOG_ERROR("Render exception: {}", e.what());
+        spdlog::default_logger()->flush();
+    } catch (...) {
+        LOG_ERROR("Render unknown exception");
+        spdlog::default_logger()->flush();
+    }
 }
 
 // ============ Window Procedure ============
@@ -410,10 +467,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     
     switch (msg) {
         case WM_DESTROY:
+            LOG_INFO("WM_DESTROY received");
             PostQuitMessage(0);
             return 0;
             
         case WM_CLOSE:
+            LOG_INFO("WM_CLOSE received");
             // Ensure the window is actually destroyed; otherwise we may stop pumping messages
             // while a borderless fullscreen window still exists, which can look like a "glitch".
             g_running = false;
@@ -433,11 +492,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             // ESC handling depends on current state
             if (wParam == VK_ESCAPE) {
+                LOG_INFO("VK_ESCAPE pressed");
                 auto currentState = gameState.GetCurrentStateType();
                 // In game states, ESC opens pause menu (handled by state)
                 // In menu states, ESC exits the game
                 if (currentState == Game::EGameState::MainMenu || 
                     currentState == Game::EGameState::Login) {
+                    LOG_INFO("ESC in Login/MainMenu - exiting");
                     g_running = false;
                     DestroyWindow(hWnd);
                     return 0;
@@ -507,19 +568,49 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         
-        case WM_SIZE:
+        case WM_SIZE: {
+            const char* sizeType = "UNKNOWN";
+            if (wParam == SIZE_RESTORED) sizeType = "SIZE_RESTORED";
+            else if (wParam == SIZE_MINIMIZED) sizeType = "SIZE_MINIMIZED";
+            else if (wParam == SIZE_MAXIMIZED) sizeType = "SIZE_MAXIMIZED";
+            else if (wParam == SIZE_MAXSHOW) sizeType = "SIZE_MAXSHOW";
+            else if (wParam == SIZE_MAXHIDE) sizeType = "SIZE_MAXHIDE";
+            
+            UINT width = LOWORD(lParam);
+            UINT height = HIWORD(lParam);
+            LOG_INFO("WM_SIZE: type={}, size={}x{}, current={}x{}", sizeType, width, height, g_screenWidth, g_screenHeight);
+            
+            // Handle minimize - set screen size to 0 to skip rendering
+            if (wParam == SIZE_MINIMIZED) {
+                g_screenWidth = 0;
+                g_screenHeight = 0;
+                LOG_INFO("Window minimized, skipping render");
+                return 0;
+            }
+            
             if (g_renderer && wParam != SIZE_MINIMIZED) {
-                UINT width = LOWORD(lParam);
-                UINT height = HIWORD(lParam);
                 if (width > 0 && height > 0) {
-                    g_screenWidth = width;
-                    g_screenHeight = height;
-                    g_renderer->Resize(width, height);
-                    Panorama::CUIEngine::Instance().SetScreenSize((float)width, (float)height);
-                    Game::GameStateManager::Instance().OnResize((float)width, (float)height);
+                    try {
+                        g_screenWidth = width;
+                        g_screenHeight = height;
+                        LOG_INFO("Calling g_renderer->Resize({}x{})", width, height);
+                        g_renderer->Resize(width, height);
+                        LOG_INFO("Calling CUIEngine::SetScreenSize({}x{})", width, height);
+                        Panorama::CUIEngine::Instance().SetScreenSize((float)width, (float)height);
+                        LOG_INFO("Calling GameStateManager::OnResize({}x{})", width, height);
+                        Game::GameStateManager::Instance().OnResize((float)width, (float)height);
+                        LOG_INFO("WM_SIZE handling complete");
+                    } catch (const std::exception& e) {
+                        LOG_ERROR("WM_SIZE exception: {}", e.what());
+                        spdlog::default_logger()->flush();
+                    } catch (...) {
+                        LOG_ERROR("WM_SIZE unknown exception");
+                        spdlog::default_logger()->flush();
+                    }
                 }
             }
             return 0;
+        }
     }
     
     return DefWindowProc(hWnd, msg, wParam, lParam);

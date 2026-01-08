@@ -122,6 +122,42 @@ enum class Overflow {
     Squish      // overflow: squish
 };
 
+// ============ Flexbox Layout Enums ============
+
+enum class FlexDirection {
+    Row,        // flex-direction: row
+    Column      // flex-direction: column
+};
+
+enum class JustifyContent {
+    Start,          // justify-content: start (flex-start)
+    Center,         // justify-content: center
+    End,            // justify-content: end (flex-end)
+    SpaceBetween    // justify-content: space-between
+};
+
+enum class AlignItems {
+    Start,      // align-items: start (flex-start)
+    Center,     // align-items: center
+    End,        // align-items: end (flex-end)
+    Stretch     // align-items: stretch
+};
+
+enum class FlexWrap {
+    NoWrap,     // flex-wrap: nowrap (default)
+    Wrap,       // flex-wrap: wrap
+    WrapReverse // flex-wrap: wrap-reverse
+};
+
+enum class AlignContent {
+    Start,          // align-content: start (flex-start)
+    Center,         // align-content: center
+    End,            // align-content: end (flex-end)
+    SpaceBetween,   // align-content: space-between
+    SpaceAround,    // align-content: space-around
+    Stretch         // align-content: stretch
+};
+
 // ============ Event System ============
 
 enum class PanelEventType {

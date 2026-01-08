@@ -70,6 +70,19 @@ void StyleProperties::Merge(const StyleProperties& other) {
     MERGE_OPT(flowChildren);
     MERGE_OPT(overflow);
     MERGE_OPT(clipChildren);
+    
+    // Flexbox properties
+    MERGE_OPT(displayFlex);
+    MERGE_OPT(flexDirection);
+    MERGE_OPT(justifyContent);
+    MERGE_OPT(alignItems);
+    MERGE_OPT(flexWrap);
+    MERGE_OPT(alignContent);
+    MERGE_OPT(gap);
+    MERGE_OPT(flexGrow);
+    MERGE_OPT(flexShrink);
+    MERGE_OPT(flexBasis);
+    
     MERGE_OPT(visible);
     MERGE_OPT(opacity);
     MERGE_OPT(preTransformScale2D);
@@ -253,6 +266,11 @@ bool CStyleSheet::Parse(const std::string& css) {
 
         // Parse properties once, then create one rule per selector in selector list (split by ',')
         StyleProperties props = ParseProperties(blockStr);
+        
+        // Debug: log if this rule has displayFlex (disabled - too verbose)
+        // if (props.displayFlex.has_value() && props.displayFlex.value()) {
+        //     LOG_INFO("CStyleSheet::Parse found rule with displayFlex=true selector='{}'", selectorStr);
+        // }
 
         size_t sPos = 0;
         while (sPos < selectorStr.size()) {
@@ -334,8 +352,8 @@ static std::filesystem::path ResolveResourcePath(const std::string& rawPath) {
 
 bool CStyleSheet::LoadFromFile(const std::string& path) {
     // Load CSS file (with minimal @import support) and Parse().
-    // LOG_INFO("CStyleSheet::LoadFromFile request='{}' cwd='{}'",
-    //     path, std::filesystem::current_path().u8string());
+    LOG_INFO("CStyleSheet::LoadFromFile request='{}' cwd='{}'",
+        path, std::filesystem::current_path().u8string());
 
     Clear();
     std::unordered_set<std::string> visited;
@@ -350,8 +368,8 @@ bool CStyleSheet::LoadFromFile(const std::string& path) {
         }
         visited.insert(key);
 
-        // LOG_INFO("CStyleSheet::LoadFromFile opening css='{}' resolved='{}'",
-        //     p.u8string(), resolved.u8string());
+        LOG_INFO("CStyleSheet::LoadFromFile opening css='{}' resolved='{}'",
+            p.u8string(), resolved.u8string());
 
         std::ifstream file(resolved);
         if (!file.is_open()) {
@@ -419,29 +437,19 @@ bool CStyleSheet::LoadFromFile(const std::string& path) {
             return false;
         }
 
-        // LOG_INFO("CStyleSheet::LoadFromFile parsed resolved='{}' (rules={}, animations={})",
-        //     resolved.u8string(), (int)m_rules.size(), (int)m_animations.size());
+        LOG_INFO("CStyleSheet::LoadFromFile parsed resolved='{}' (rules={}, animations={})",
+            resolved.u8string(), (int)m_rules.size(), (int)m_animations.size());
         return true;
     };
 
     bool ok = loadInternal(std::filesystem::path(path));
-    // LOG_INFO("CStyleSheet::LoadFromFile done request='{}' -> {} (total rules={}, animations={})",
-    //     path, ok ? "OK" : "FAILED", (int)m_rules.size(), (int)m_animations.size());
+    LOG_INFO("CStyleSheet::LoadFromFile done request='{}' -> {} (total rules={}, animations={})",
+        path, ok ? "OK" : "FAILED", (int)m_rules.size(), (int)m_animations.size());
     return ok;
 }
 
 StyleProperties CStyleSheet::ComputeStyle(const CPanel2D* panel) const {
     StyleProperties result;
-    
-    // Debug: log matching attempt
-    // static int computeLogCount = 0;
-    // if (computeLogCount < 20 && panel) {
-    //     LOG_INFO("CStyleSheet::ComputeStyle panel id='{}' class='{}' totalRules={}",
-    //         panel->GetID(), 
-    //         panel->HasClass("LoginInput") ? "LoginInput" : (panel->HasClass("FieldLabel") ? "FieldLabel" : "none"),
-    //         m_rules.size());
-    //     computeLogCount++;
-    // }
     
     // Collect matching rules
     std::vector<const StyleRule*> matchingRules;
@@ -450,12 +458,6 @@ StyleProperties CStyleSheet::ComputeStyle(const CPanel2D* panel) const {
             matchingRules.push_back(&rule);
         }
     }
-    
-    // Debug: log matched rules count
-    // if (computeLogCount <= 20 && panel && !matchingRules.empty()) {
-    //     LOG_INFO("CStyleSheet::ComputeStyle panel id='{}' matchedRules={}", 
-    //         panel->GetID(), matchingRules.size());
-    // }
     
     // Sort by specificity, then source order
     std::sort(matchingRules.begin(), matchingRules.end(),
@@ -616,7 +618,25 @@ StyleSelector CStyleSheet::ParseSelector(const std::string& selectorStr) {
 StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
     StyleProperties props;
     
-    std::istringstream stream(block);
+    // Remove CSS comments from block before parsing
+    std::string cleanBlock;
+    cleanBlock.reserve(block.size());
+    size_t i = 0;
+    while (i < block.size()) {
+        if (i + 1 < block.size() && block[i] == '/' && block[i + 1] == '*') {
+            // Skip comment
+            i += 2;
+            while (i + 1 < block.size() && !(block[i] == '*' && block[i + 1] == '/')) {
+                i++;
+            }
+            i += 2; // Skip */
+        } else {
+            cleanBlock += block[i];
+            i++;
+        }
+    }
+    
+    std::istringstream stream(cleanBlock);
     std::string line;
     
     while (std::getline(stream, line, ';')) {
@@ -761,6 +781,50 @@ StyleProperties CStyleSheet::ParseProperties(const std::string& block) {
         } else if (propName == "padding-bottom") {
             props.paddingBottom = ParseLength(propValue);
         }
+        // Flexbox properties
+        else if (propName == "display") {
+            // LOG_INFO("CStyleSheet::ParseProperties found display='{}' -> setting displayFlex={}", 
+            //     propValue, propValue == "flex" ? "true" : "false");
+            if (propValue == "flex") {
+                props.displayFlex = true;
+            }
+        } else if (propName == "flex-direction") {
+            if (propValue == "column") props.flexDirection = FlexDirection::Column;
+            else props.flexDirection = FlexDirection::Row;
+        } else if (propName == "justify-content") {
+            if (propValue == "center") props.justifyContent = JustifyContent::Center;
+            else if (propValue == "end" || propValue == "flex-end") props.justifyContent = JustifyContent::End;
+            else if (propValue == "space-between") props.justifyContent = JustifyContent::SpaceBetween;
+            else props.justifyContent = JustifyContent::Start;
+        } else if (propName == "align-items") {
+            if (propValue == "center") props.alignItems = AlignItems::Center;
+            else if (propValue == "end" || propValue == "flex-end") props.alignItems = AlignItems::End;
+            else if (propValue == "stretch") props.alignItems = AlignItems::Stretch;
+            else props.alignItems = AlignItems::Start;
+        } else if (propName == "flex-wrap") {
+            if (propValue == "wrap") props.flexWrap = FlexWrap::Wrap;
+            else if (propValue == "wrap-reverse") props.flexWrap = FlexWrap::WrapReverse;
+            else props.flexWrap = FlexWrap::NoWrap;
+        } else if (propName == "align-content") {
+            if (propValue == "center") props.alignContent = AlignContent::Center;
+            else if (propValue == "end" || propValue == "flex-end") props.alignContent = AlignContent::End;
+            else if (propValue == "space-between") props.alignContent = AlignContent::SpaceBetween;
+            else if (propValue == "space-around") props.alignContent = AlignContent::SpaceAround;
+            else if (propValue == "stretch") props.alignContent = AlignContent::Stretch;
+            else props.alignContent = AlignContent::Start;
+        } else if (propName == "gap") {
+            props.gap = ParseLength(propValue).value;
+        } else if (propName == "flex-grow") {
+            props.flexGrow = std::stof(propValue);
+        } else if (propName == "flex-shrink") {
+            props.flexShrink = std::stof(propValue);
+        } else if (propName == "flex-basis") {
+            if (propValue == "auto") {
+                props.flexBasis = 0.0f;
+            } else {
+                props.flexBasis = ParseLength(propValue).value;
+            }
+        }
         // Add more property parsing as needed
     }
     
@@ -890,6 +954,8 @@ CStyleManager::CStyleManager() {
 
 void CStyleManager::LoadGlobalStyles(const std::string& path) {
     m_globalStyles->LoadFromFile(path);
+    LOG_INFO("CStyleManager::LoadGlobalStyles loaded '{}' -> {} rules", 
+        path, (int)m_globalStyles->GetRules().size());
 }
 
 void CStyleManager::RegisterStyleSheet(const std::string& panelType, std::shared_ptr<CStyleSheet> sheet) {
@@ -898,6 +964,16 @@ void CStyleManager::RegisterStyleSheet(const std::string& panelType, std::shared
 
 StyleProperties CStyleManager::ComputeStyle(const CPanel2D* panel) const {
     StyleProperties result = m_defaultStyle;
+    
+    // Debug: log global styles state (disabled - too verbose)
+    // static int computeLogCount = 0;
+    // if (computeLogCount < 5 && panel) {
+    //     LOG_INFO("CStyleManager::ComputeStyle panel='{}' globalStyles={} globalRules={}",
+    //         panel->GetID(),
+    //         m_globalStyles ? "exists" : "null",
+    //         m_globalStyles ? (int)m_globalStyles->GetRules().size() : 0);
+    //     computeLogCount++;
+    // }
     
     // Apply global styles
     if (m_globalStyles) {

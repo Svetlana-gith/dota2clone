@@ -1,6 +1,7 @@
 #include "CPanel2D.h"
 #include "../rendering/CUIRenderer.h"
 #include "../layout/CStyleSheet.h"
+#include "../layout/FlexLayout.h"
 #include "CUIEngine.h"
 #include <algorithm>
 
@@ -417,43 +418,53 @@ void CPanel2D::PerformLayout(const Rect2D& parentBounds) {
         height - padTop - padBottom
     };
     
-    // Layout children based on flow direction
-    FlowDirection flow = m_computedStyle.flowChildren.value_or(FlowDirection::None);
-    f32 childX = m_contentBounds.x;
-    f32 childY = m_contentBounds.y;
+    // ============ Layout Children ============
     
-    for (auto& child : m_children) {
-        if (!child || !child->IsVisible()) continue;
+    // Check if this panel uses flexbox layout
+    bool useFlex = m_computedStyle.displayFlex.value_or(false);
+    
+    if (useFlex) {
+        // Use flexbox layout
+        LayoutFlex(this);
+    } else {
+        // Use traditional flow layout
+        FlowDirection flow = m_computedStyle.flowChildren.value_or(FlowDirection::None);
+        f32 childX = m_contentBounds.x;
+        f32 childY = m_contentBounds.y;
         
-        // Get child margins
-        f32 marginLeft = child->m_computedStyle.marginLeft.has_value() ? 
-            child->ResolveLength(child->m_computedStyle.marginLeft.value(), m_contentBounds.width, m_contentBounds.width) : 0;
-        f32 marginTop = child->m_computedStyle.marginTop.has_value() ? 
-            child->ResolveLength(child->m_computedStyle.marginTop.value(), m_contentBounds.height, m_contentBounds.height) : 0;
-        f32 marginRight = child->m_computedStyle.marginRight.has_value() ? 
-            child->ResolveLength(child->m_computedStyle.marginRight.value(), m_contentBounds.width, m_contentBounds.width) : 0;
-        f32 marginBottom = child->m_computedStyle.marginBottom.has_value() ? 
-            child->ResolveLength(child->m_computedStyle.marginBottom.value(), m_contentBounds.height, m_contentBounds.height) : 0;
-        
-        Rect2D childParentBounds = m_contentBounds;
-        if (flow == FlowDirection::Down) {
-            // Apply top margin and set position
-            childY += marginTop;
-            childParentBounds.y = childY;
-            childParentBounds.height = m_contentBounds.y + m_contentBounds.height - childY;
-        } else if (flow == FlowDirection::Right || flow == FlowDirection::RightWrap) {
-            // Apply left margin and set position
-            childX += marginLeft;
-            childParentBounds.x = childX;
-            childParentBounds.width = m_contentBounds.x + m_contentBounds.width - childX;
-        }
-        
-        child->PerformLayout(childParentBounds);
-        
-        if (flow == FlowDirection::Down) {
-            childY += child->GetActualHeight() + marginBottom;
-        } else if (flow == FlowDirection::Right) {
-            childX += child->GetActualWidth() + marginRight;
+        for (auto& child : m_children) {
+            if (!child || !child->IsVisible()) continue;
+            
+            // Get child margins
+            f32 marginLeft = child->m_computedStyle.marginLeft.has_value() ? 
+                child->ResolveLength(child->m_computedStyle.marginLeft.value(), m_contentBounds.width, m_contentBounds.width) : 0;
+            f32 marginTop = child->m_computedStyle.marginTop.has_value() ? 
+                child->ResolveLength(child->m_computedStyle.marginTop.value(), m_contentBounds.height, m_contentBounds.height) : 0;
+            f32 marginRight = child->m_computedStyle.marginRight.has_value() ? 
+                child->ResolveLength(child->m_computedStyle.marginRight.value(), m_contentBounds.width, m_contentBounds.width) : 0;
+            f32 marginBottom = child->m_computedStyle.marginBottom.has_value() ? 
+                child->ResolveLength(child->m_computedStyle.marginBottom.value(), m_contentBounds.height, m_contentBounds.height) : 0;
+            
+            Rect2D childParentBounds = m_contentBounds;
+            if (flow == FlowDirection::Down) {
+                // Apply top margin and set position
+                childY += marginTop;
+                childParentBounds.y = childY;
+                childParentBounds.height = m_contentBounds.y + m_contentBounds.height - childY;
+            } else if (flow == FlowDirection::Right || flow == FlowDirection::RightWrap) {
+                // Apply left margin and set position
+                childX += marginLeft;
+                childParentBounds.x = childX;
+                childParentBounds.width = m_contentBounds.x + m_contentBounds.width - childX;
+            }
+            
+            child->PerformLayout(childParentBounds);
+            
+            if (flow == FlowDirection::Down) {
+                childY += child->GetActualHeight() + marginBottom;
+            } else if (flow == FlowDirection::Right) {
+                childX += child->GetActualWidth() + marginRight;
+            }
         }
     }
     

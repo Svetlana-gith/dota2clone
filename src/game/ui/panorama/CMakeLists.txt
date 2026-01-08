@@ -6,6 +6,8 @@ add_library(panorama_ui STATIC
     core/CPanel2D.cpp
     core/CUIEngine.h
     core/CUIEngine.cpp
+    core/CStyleHotReload.h
+    core/CStyleHotReload.cpp
     core/GameEvents.h
     core/GameEvents.cpp
     
@@ -14,6 +16,8 @@ add_library(panorama_ui STATIC
     layout/CStyleSheet.cpp
     layout/CLayoutFile.h
     layout/CLayoutFile.cpp
+    layout/FlexLayout.h
+    layout/FlexLayout.cpp
     
     # Widgets
     widgets/CPanelWidgets.h

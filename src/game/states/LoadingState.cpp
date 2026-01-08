@@ -41,10 +41,10 @@ static void CreateFallbackTerrain(::WorldEditor::World& world) {
     terrainTransform.scale = Vec3(1.0f);
 
     auto& terrain = world.addComponent<WorldEditor::TerrainComponent>(terrainE);
-    // Dota 2 scale: 256x256 tiles @ 64 units = 16384x16384 units
-    // Grid navigation uses 64 unit cells (from Dota 2 FGD: @gridnav(64, 32, 32, 16384))
+    // Map scale: 256x256 tiles @ 64 units = 16384x16384 units
+    // Navigation grid uses 64 unit cells.
     WorldEditor::TerrainTools::initTileTerrain(terrain, 256, 256, 64.0f, 128.0f);
-    WorldEditor::TerrainTools::syncHeightmapFromLevels(terrain);
+    WorldEditor::TerrainTools::generateHeights(terrain);
 
     auto& terrainMesh = world.addComponent<WorldEditor::MeshComponent>(terrainE);
     terrainMesh.name = "Terrain";
@@ -379,7 +379,7 @@ void LoadingState::LoadGameWorld() {
     auto heroEntity = m_serverWorld->createEntity("PlayerHero");
     
     WorldEditor::TransformComponent heroTransform;
-    heroTransform.position = Vec3(0.0f, 0.0f, 0.0f);
+    heroTransform.position = Vec3(1600.0f, 50.0f, 1600.0f);
     heroTransform.rotation = Quat(1.0f, 0.0f, 0.0f, 0.0f);
     heroTransform.scale = Vec3(1.0f);
     entityManager.addComponent<WorldEditor::TransformComponent>(heroEntity, heroTransform);
@@ -403,17 +403,17 @@ void LoadingState::LoadGameWorld() {
     
     // === Create Towers ===
     // Radiant towers
-    CreateTower(Vec3(-30.0f, 0.0f, -30.0f), 1, "RadiantTower1");
-    CreateTower(Vec3(-50.0f, 0.0f, -50.0f), 1, "RadiantTower2");
+    CreateTower(Vec3(2200.0f, 0.0f, 1800.0f), 1, "RadiantTower1");
+    CreateTower(Vec3(1800.0f, 0.0f, 2200.0f), 1, "RadiantTower2");
     
     // Dire towers
-    CreateTower(Vec3(30.0f, 0.0f, 30.0f), 2, "DireTower1");
-    CreateTower(Vec3(50.0f, 0.0f, 50.0f), 2, "DireTower2");
+    CreateTower(Vec3(13800.0f, 0.0f, 14200.0f), 2, "DireTower1");
+    CreateTower(Vec3(14200.0f, 0.0f, 13800.0f), 2, "DireTower2");
     
     // === Create Test Creeps ===
-    CreateCreep(Vec3(10.0f, 0.0f, 10.0f), 2, "DireCreep1");
-    CreateCreep(Vec3(12.0f, 0.0f, 10.0f), 2, "DireCreep2");
-    CreateCreep(Vec3(14.0f, 0.0f, 10.0f), 2, "DireCreep3");
+    CreateCreep(Vec3(3000.0f, 0.0f, 3000.0f), 2, "DireCreep1");
+    CreateCreep(Vec3(3200.0f, 0.0f, 3000.0f), 2, "DireCreep2");
+    CreateCreep(Vec3(3400.0f, 0.0f, 3000.0f), 2, "DireCreep3");
     
     // Start the game (activates systems, starts creep spawning)
     m_serverWorld->startGame();

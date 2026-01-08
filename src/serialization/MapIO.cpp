@@ -386,8 +386,21 @@ bool load(World& world, const String& path, String* outError) {
                 jsonToTransform(comps["transform"], t);
             }
             if (comps.contains("terrain")) {
+                const bool hasHeightLevels =
+                    comps["terrain"].contains("heightLevels") &&
+                    comps["terrain"]["heightLevels"].is_array() &&
+                    !comps["terrain"]["heightLevels"].empty();
+                const bool hasHeightmap =
+                    comps["terrain"].contains("heightmap") &&
+                    comps["terrain"]["heightmap"].is_array() &&
+                    !comps["terrain"]["heightmap"].empty();
+
                 auto& t = world.addComponent<TerrainComponent>(e);
                 jsonToTerrain(comps["terrain"], t);
+
+                if (!hasHeightLevels && !hasHeightmap) {
+                    WorldEditor::TerrainTools::generateHeights(t);
+                }
             }
             if (comps.contains("material")) {
                 auto& m = world.addComponent<MaterialComponent>(e);

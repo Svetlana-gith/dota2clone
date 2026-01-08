@@ -51,8 +51,8 @@ RegisterState::~RegisterState() = default;
 void RegisterState::OnEnter() {
     LOG_INFO("RegisterState::OnEnter()");
     
-    // Load login stylesheet (shared with LoginState)
-    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login.css");
+    // Load login stylesheet (Flexbox + Tailwind utilities, shared with LoginState)
+    Panorama::CUIEngine::Instance().LoadStyleSheet("resources/styles/login-modern.css");
     
     CreateUI();
     SetupAuthCallbacks();

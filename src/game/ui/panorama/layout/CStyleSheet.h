@@ -88,6 +88,20 @@ struct StyleProperties {
     std::optional<Overflow> overflow;
     std::optional<bool> clipChildren;
     
+    // Flexbox Layout
+    std::optional<bool> displayFlex;
+    std::optional<FlexDirection> flexDirection;
+    std::optional<JustifyContent> justifyContent;
+    std::optional<AlignItems> alignItems;
+    std::optional<FlexWrap> flexWrap;
+    std::optional<AlignContent> alignContent;
+    std::optional<f32> gap;  // px
+    
+    // Flexbox Item Properties
+    std::optional<f32> flexGrow;
+    std::optional<f32> flexShrink;
+    std::optional<f32> flexBasis;  // px or auto (0 = auto)
+    
     // Visibility & Opacity
     std::optional<bool> visible;
     std::optional<f32> opacity;

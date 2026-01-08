@@ -107,6 +107,54 @@
 
 ---
 
+## 🎨 UI System
+
+### Flexbox Layout System
+**Статус:** ✅ Core implementation complete  
+**Документация:** `docs/Flexbox_Implementation_Summary.md`, `docs/Flexbox_Guide.md`, `docs/Flexbox_Testing.md`
+
+#### Реализовано
+- [x] Базовая реализация Flexbox (FlexLayout.cpp) - 5-phase algorithm
+- [x] CSS парсинг flex container свойств (display, flex-direction, justify-content, align-items, gap)
+- [x] CSS парсинг flex-wrap и align-content
+- [x] CSS парсинг flex-item свойств (flex-grow, flex-shrink, flex-basis)
+- [x] Интеграция в CPanel2D::PerformLayout()
+- [x] Multi-line support (flex-wrap: wrap, wrap-reverse)
+- [x] Align-content для multi-line layouts (все 6 значений)
+- [x] Правильный shrink (работает даже при flex-grow > 0)
+- [x] Защита от отрицательных размеров
+- [x] Space-between для justify-content
+- [x] Stretch alignment
+- [x] Объединение Flexbox + Tailwind (login-modern.css)
+
+#### TODO
+- [x] Применение к реальному login screen (замена login.css на login-modern.css)
+- [ ] Учёт margins в cross-axis alignment (TODO в коде)
+- [ ] Debug overlay для визуализации flex layout (#ifdef UI_DEBUG_LAYOUT)
+- [ ] Separate Measure() pass для оптимизации (избежать двойного layout)
+- [ ] order property для изменения порядка элементов
+- [ ] Тестирование на сложных UI (nested flex, mixed flex/flow)
+- [ ] align-self property (override align-items per item)
+- [ ] flex shorthand (flex: 1 1 auto)
+
+### CSS Hot Reload
+- [x] CStyleHotReload класс с file watching
+- [x] Интеграция в CUIEngine
+- [x] Debug-only режим (#ifdef _DEBUG)
+- [x] Документация (HotReload_Guide.md)
+- [ ] Поддержка нескольких stylesheet файлов
+- [ ] Уведомления об ошибках парсинга CSS
+
+### Tailwind-like Utility Classes
+- [x] Базовые utility классы (spacing, colors, typography, borders, layout)
+- [x] Примеры использования (LoginForm_Tailwind_Example.cpp)
+- [x] Документация (TailwindCSS_Approach.md, Tailwind_CheatSheet.md)
+- [ ] Responsive utilities (breakpoints)
+- [ ] State variants (:hover, :active, :focus)
+- [ ] Animation utilities
+
+---
+
 ## Изменённые файлы (последняя сессия)
 - `src/game/GameState.h` - добавлен SetSelectedHero, m_selectedHeroType
 - `src/game/states/HeroPickState.cpp` - передача выбранного героя

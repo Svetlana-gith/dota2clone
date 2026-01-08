@@ -1,4 +1,4 @@
-/* Login/Register screen stylesheet - Gaming Premium Style */
+/* Login/Register screen - Tailwind-Inspired Refactor */
 @import "base.css";
 
 /* ===== Gaming Premium Color Palette ===== */
@@ -27,13 +27,11 @@
   height: 15%;
 }
 
-/* ===== Game Logo ===== */
 #GameLogo {
   color: rgba(212, 168, 75, 1.0);
   font-size: 48px;
 }
 
-/* ===== Accent Line ===== */
 #AccentLine {
   background-color: rgba(212, 168, 75, 0.8);
   width: 15%;
@@ -54,8 +52,6 @@
 #FormTitle {
   width: 87%;
   height: 7%;
-  color: rgba(255, 255, 255, 1.0);
-  font-size: 28px;
   x: 6%;
   y: 3%;
 }
@@ -64,8 +60,6 @@
 .FieldLabel {
   width: 87%;
   height: 4%;
-  color: rgba(136, 146, 160, 1.0);
-  font-size: 14px;
 }
 
 #UsernameLabel {
@@ -87,31 +81,18 @@
 .LoginInput {
   width: 87%;
   height: 13%;
-  background-color: rgba(26, 31, 42, 1.0);
-  border-radius: 8px;
-  border-width: 2px;
-  border-color: rgba(42, 48, 64, 1.0);
-  padding-left: 16px;
-  font-size: 17px;
-  color: rgba(255, 255, 255, 1.0);
-}
-
-.LoginInput:focus {
-  border-color: rgba(212, 168, 75, 0.8);
+  x: 6%;
 }
 
 #UsernameInput {
-  x: 6%;
   y: 17%;
 }
 
 #PasswordInput {
-  x: 6%;
   y: 35%;
 }
 
 #ConfirmPasswordInput {
-  x: 6%;
   y: 53%;
 }
 
@@ -119,26 +100,14 @@
 #ErrorLabel {
   width: 87%;
   height: 7%;
-  background-color: rgba(255, 107, 107, 0.15);
-  border-left-width: 3px;
-  border-color: rgba(255, 107, 107, 1.0);
-  border-radius: 6px;
-  color: rgba(255, 107, 107, 1.0);
-  font-size: 15px;
-  padding-left: 12px;
-  padding-right: 12px;
   x: 6%;
   y: 49%;
 }
 
-/* ===== Primary Button (Login/Register) ===== */
+/* ===== Primary Button ===== */
 #PrimaryButton {
   width: 87%;
   height: 11%;
-  background-color: rgba(212, 168, 75, 1.0);
-  border-radius: 8px;
-  font-size: 18px;
-  color: rgba(10, 14, 23, 1.0);
   x: 6%;
   y: 58%;
 }
@@ -151,16 +120,10 @@
   background-color: rgba(139, 105, 20, 1.0);
 }
 
-/* ===== Secondary Button (Create Account/Back) ===== */
+/* ===== Secondary Button ===== */
 #SecondaryButton {
   width: 87%;
   height: 9%;
-  background-color: rgba(42, 48, 64, 1.0);
-  border-radius: 8px;
-  border-width: 1px;
-  border-color: rgba(78, 205, 196, 0.5);
-  font-size: 16px;
-  color: rgba(78, 205, 196, 1.0);
   x: 6%;
   y: 71%;
 }
@@ -182,11 +145,6 @@
   y: 95%;
 }
 
-#HintLabel {
-  color: rgba(102, 102, 102, 1.0);
-  font-size: 12px;
-}
-
 /* ===== Loading Overlay ===== */
 #LoadingOverlay {
   width: 100%;
@@ -199,40 +157,7 @@
   font-size: 24px;
 }
 
-/* ===== Legacy IDs (for backward compatibility) ===== */
-#LoginBtn {
-  width: 87%;
-  height: 56px;
-  background-color: rgba(212, 168, 75, 1.0);
-  border-radius: 8px;
-  font-size: 18px;
-  color: rgba(10, 14, 23, 1.0);
-}
-
-#LoginBtn:hover {
-  background-color: rgba(245, 215, 142, 1.0);
-}
-
-#GameTitle {
-  color: rgba(212, 168, 75, 1.0);
-  font-size: 48px;
-}
-
-#LoginBox {
-  width: 40%;
-  background-color: rgba(18, 22, 31, 0.95);
-  border-radius: 12px;
-  border-width: 1px;
-  border-color: rgba(212, 168, 75, 0.3);
-  padding-left: 6%;
-  padding-right: 6%;
-  padding-top: 27px;
-  padding-bottom: 32px;
-}
-
 /* ===== Register Form Overrides ===== */
-/* Register form has 3 fields, so needs taller container */
-/* Layout: Title 3-9%, Username 13-26%, Password 31-44%, Confirm 49-62%, Error 64-67%, Primary 69-79%, Secondary 82-90% */
 .RegisterForm {
   height: 68%;
 }
@@ -247,4 +172,43 @@
 
 .RegisterSecondary {
   y: 89%;
+}
+
+/* ===== Tailwind-Style Component Classes ===== */
+
+/* Form Title - Composable */
+#FormTitle {
+  /* Uses: text-2xl text-white */
+}
+
+/* Field Labels - Composable */
+.FieldLabel {
+  /* Uses: text-sm text-gray */
+}
+
+/* Input Fields - Composable */
+.LoginInput {
+  /* Uses: bg-input border-2 border-input rounded-md px-4 text-lg text-white */
+  /* Focus: border-gold */
+}
+
+/* Error Alert - Composable */
+#ErrorLabel {
+  /* Uses: bg-error border-l-3 border-error rounded text-error text-base px-3 py-2 */
+}
+
+/* Primary Button - Composable */
+#PrimaryButton {
+  /* Uses: bg-gold rounded-md text-lg font-semibold */
+  /* Hover: bg-gold-light */
+}
+
+/* Secondary Button - Composable */
+#SecondaryButton {
+  /* Uses: bg-card border-2 border-cyan rounded-md text-cyan */
+}
+
+/* Hint Text - Composable */
+#HintLabel {
+  /* Uses: text-xs text-muted */
 }

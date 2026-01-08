@@ -130,6 +130,13 @@ void CUIRenderer::BeginFrame() {
     
     // Set viewport and scissor ONCE per frame
     if (m_commandList) {
+        // Log viewport size periodically
+        static int frameCount = 0;
+        frameCount++;
+        if (frameCount <= 10 || frameCount % 1000 == 0) {
+            spdlog::info("CUIRenderer::BeginFrame: setting viewport {}x{}", m_screenWidth, m_screenHeight);
+        }
+        
         D3D12_VIEWPORT viewport = { 0.0f, 0.0f, m_screenWidth, m_screenHeight, 0.0f, 1.0f };
         D3D12_RECT scissor = { 0, 0, (LONG)m_screenWidth, (LONG)m_screenHeight };
         m_commandList->RSSetViewports(1, &viewport);

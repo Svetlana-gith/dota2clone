@@ -153,19 +153,26 @@ bool DirectXRenderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
 }
 
 void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
+    spdlog::info("DirectXRenderer::Resize called: {}x{} (current: {}x{})", width, height, m_width, m_height);
+    
     if (!m_swapChain || !m_device) {
+        spdlog::warn("Resize: swapChain or device is null, skipping");
         return;
     }
     if (width == 0 || height == 0) {
+        spdlog::info("Resize: width or height is 0, skipping (minimized)");
         return; // minimized
     }
     if (width == m_width && height == m_height) {
+        spdlog::info("Resize: size unchanged, skipping");
         return;
     }
 
+    spdlog::info("Resize: WaitForPreviousFrame...");
     // Make sure GPU is not using current backbuffers.
     WaitForPreviousFrame();
 
+    spdlog::info("Resize: Releasing render targets...");
     // Release references to the back buffers.
     for (auto& rt : m_renderTargets) {
         rt.Reset();
@@ -180,6 +187,7 @@ void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
     DXGI_SWAP_CHAIN_DESC desc{};
     DX_CHECK(m_swapChain->GetDesc(&desc));
 
+    spdlog::info("Resize: ResizeBuffers to {}x{}...", width, height);
     // Resize swapchain buffers.
     DX_CHECK(m_swapChain->ResizeBuffers(
         kFrameCount,
@@ -193,6 +201,7 @@ void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
     m_height = height;
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 
+    spdlog::info("Resize: Recreating RTVs...");
     // Recreate RTVs for back buffers (keep RTV heap; just rewrite first kFrameCount descriptors).
     m_renderTargets.resize(kFrameCount);
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -201,6 +210,8 @@ void DirectXRenderer::Resize(uint32_t width, uint32_t height) {
         m_device->CreateRenderTargetView(m_renderTargets[i].Get(), nullptr, rtvHandle);
         rtvHandle.ptr += static_cast<SIZE_T>(m_rtvDescriptorSize);
     }
+    
+    spdlog::info("Resize: Complete, new size {}x{}, frameIndex={}", m_width, m_height, m_frameIndex);
 }
 
 void DirectXRenderer::Shutdown() {
