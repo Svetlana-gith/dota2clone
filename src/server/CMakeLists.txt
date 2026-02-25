@@ -28,6 +28,9 @@ if(WIN32)
     target_compile_definitions(world_editor_server PUBLIC DIRECTX_RENDERER)
 endif()
 
+# ============ Windows-only executables (require DirectX + Winsock) ============
+if(WIN32)
+
 # ============ Dedicated Server Executable ============
 
 add_executable(DedicatedServer
@@ -97,3 +100,5 @@ add_custom_command(TARGET MatchmakingCoordinator POST_BUILD
         $<TARGET_FILE:MatchmakingCoordinator>
         ${CMAKE_BINARY_DIR}/MatchmakingCoordinator.exe
 )
+
+endif() # WIN32

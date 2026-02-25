@@ -55,20 +55,25 @@ target_link_libraries(world_editor_world PUBLIC
     world_editor_common
 )
 
-# Enable DirectX renderer flag
-target_compile_definitions(world_editor_world
-    PUBLIC
-        DIRECTX_RENDERER
-)
+# Enable DirectX renderer flag (Windows only)
+if(WIN32)
+    target_compile_definitions(world_editor_world
+        PUBLIC
+            DIRECTX_RENDERER
+    )
+endif()
 
-# Enable /FS flag for parallel PDB writing (fixes C1041 error)
+# Compiler-specific flags
 if(MSVC)
+    # Enable /FS flag for parallel PDB writing (fixes C1041 error)
     target_compile_options(world_editor_world PRIVATE /FS)
     # Place PDBs next to the final binaries to avoid LNK4099 warnings when linking the main exe.
-    # (MSVC sometimes stores only the PDB filename in object debug records, and the linker then
-    # searches in the executable output directory.)
     set_target_properties(world_editor_world PROPERTIES
         PDB_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
     )
+else()
+    # GCC/Clang require 'template' keyword on dependent template names (e.g. view.template get<T>()).
+    # The codebase targets MSVC which is lenient here; -fpermissive allows building on GCC/Clang.
+    target_compile_options(world_editor_world PRIVATE -fpermissive)
 endif()
