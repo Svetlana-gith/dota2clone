@@ -24,3 +24,37 @@ Targets: WorldEditor, Game, DedicatedServer, AuthServer, MatchmakingCoordinator,
 
 ## Cursor Rules
 Always use Context7 MCP server for documentation queries and API references.
+
+## Cursor Cloud specific instructions
+
+### Platform limitation
+This project targets **Windows 10/11 x64** with DirectX 12, Winsock2, and Windows BCrypt API. The Cloud Agent Linux environment **cannot build or run the full application**. The CMakeLists.txt files have been patched to support building portable components on Linux (see below).
+
+### Linux build (Cloud Agent)
+```bash
+cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc
+cmake --build build --config Debug -j$(nproc)
+ctest --test-dir build -C Debug
+```
+
+On Linux, only these targets are built:
+- `world_editor_core` (portable: glm, spdlog, EnTT, nlohmann_json)
+- `world_editor_tests` (smoke test, links only to core on Linux)
+- Third-party libraries: sqlite3_lib, Catch2, glm, spdlog
+
+All Windows-only targets (WorldEditor, Game, DedicatedServer, AuthServer, MatchmakingCoordinator, auth_tests, and all libraries depending on DirectX/Winsock/BCrypt) are skipped via `if(WIN32)` guards in CMakeLists.txt.
+
+### Linting
+```bash
+cppcheck --enable=warning,style --std=c++17 --language=c++ \
+  --suppress=missingInclude --suppress=unmatchedSuppression \
+  --suppress=internalAstError --quiet --max-configs=1 \
+  src/core/ src/common/
+```
+Note: cppcheck's `internalAstError` triggers on EnTT headers — suppress it. Full project analysis with `-I` includes for all FetchContent deps can time out; lint individual directories instead.
+
+### Key gotchas
+- GCC rejects `view.get<Component>(entity)` in template contexts (requires `view.template get<...>()`). MSVC is lenient. This prevents building `world_editor_world` and downstream libraries on Linux without source changes.
+- `MeshGenerators.cpp` accesses `MeshComponent::gpuBuffersCreated` outside of `#ifdef DIRECTX_RENDERER` guards — another blocker for Linux compilation of the world library.
+- FetchContent downloads dependencies during `cmake` configure (takes ~20s on first run with network access). The `build/_deps/` directory caches them.
+- Always pass `-DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc` on Linux; the default `c++` symlink may point to Clang which may lack `libstdc++`.

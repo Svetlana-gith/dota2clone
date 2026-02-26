@@ -41,11 +41,11 @@ enable_testing()
 
 # Windows SDK and DirectX requirements
 if(NOT WIN32)
-    message(FATAL_ERROR "DirectX integration requires Windows platform")
+    message(STATUS "Non-Windows platform detected: building portable components only (no DirectX/Winsock)")
+else()
+    # Set Windows SDK version (minimum Windows 10)
+    set(CMAKE_SYSTEM_VERSION 10.0 CACHE STRING "" FORCE)
 endif()
-
-# Set Windows SDK version (minimum Windows 10)
-set(CMAKE_SYSTEM_VERSION 10.0 CACHE STRING "" FORCE)
 
 
 # Third-party dependencies
@@ -133,55 +133,55 @@ if(NOT TARGET sqlite3_lib)
     endif()
 endif()
 
-# BCrypt library (custom implementation)
-if(NOT TARGET bcrypt_lib)
+# BCrypt library (custom implementation, Windows BCrypt API only)
+if(WIN32 AND NOT TARGET bcrypt_lib)
     add_library(bcrypt_lib STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/external/bcrypt/bcrypt_hash.cpp
     )
     target_include_directories(bcrypt_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/bcrypt)
-    if(WIN32)
-        target_link_libraries(bcrypt_lib PUBLIC bcrypt)
-        target_compile_definitions(bcrypt_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
-    endif()
+    target_link_libraries(bcrypt_lib PUBLIC bcrypt)
+    target_compile_definitions(bcrypt_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 # ImGui Docking (editor needs DockSpace API; it's only available in docking branch).
-# We use a separate FetchContent name to avoid reusing any previously populated imgui-src.
-FetchContent_Declare(
-    imgui_docking
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG docking
-)
-FetchContent_GetProperties(imgui_docking)
-if(NOT imgui_docking_POPULATED)
-    FetchContent_Populate(imgui_docking)
-endif()
-
-if(NOT TARGET imgui)
-    add_library(imgui STATIC
-        ${imgui_docking_SOURCE_DIR}/imgui.cpp
-        ${imgui_docking_SOURCE_DIR}/imgui_demo.cpp
-        ${imgui_docking_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_docking_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_docking_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-        # PATCHED: Use local copy with GPU sync fix for buffer resizing
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/imgui_impl_dx12_patched.cpp
+# Only built on Windows (requires Win32 + DirectX 12 backends).
+if(WIN32)
+    FetchContent_Declare(
+        imgui_docking
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG docking
     )
+    FetchContent_GetProperties(imgui_docking)
+    if(NOT imgui_docking_POPULATED)
+        FetchContent_Populate(imgui_docking)
+    endif()
 
-    target_include_directories(imgui
-        PUBLIC
-            ${imgui_docking_SOURCE_DIR}
-            ${imgui_docking_SOURCE_DIR}/backends
-    )
+    if(NOT TARGET imgui)
+        add_library(imgui STATIC
+            ${imgui_docking_SOURCE_DIR}/imgui.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_demo.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_widgets.cpp
+            ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+            # PATCHED: Use local copy with GPU sync fix for buffer resizing
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/imgui_impl_dx12_patched.cpp
+        )
 
-    target_link_libraries(imgui
-        PUBLIC
-            d3d12.lib
-            dxgi.lib
-            d3dcompiler.lib
-            dxguid.lib
-    )
+        target_include_directories(imgui
+            PUBLIC
+                ${imgui_docking_SOURCE_DIR}
+                ${imgui_docking_SOURCE_DIR}/backends
+        )
+
+        target_link_libraries(imgui
+            PUBLIC
+                d3d12.lib
+                dxgi.lib
+                d3dcompiler.lib
+                dxguid.lib
+        )
+    endif()
 endif()
 
 
@@ -201,34 +201,32 @@ include_directories(
 add_subdirectory(src)
 add_subdirectory(tests)
 
-# Main executable (Editor)
-add_executable(${PROJECT_NAME}
-    src/main.cpp
-)
+# Main executable (Editor) - Windows only (requires DirectX 12 + ImGui)
+if(WIN32)
+    add_executable(${PROJECT_NAME}
+        src/main.cpp
+    )
 
-target_link_libraries(${PROJECT_NAME}
-    world_editor_core
-    world_editor_common
-    world_editor_server
-    world_editor_world
-    world_editor_renderer
-    world_editor_ui
-    world_editor_gameplay
-    glm::glm
-    imgui
-    dbghelp
-)
+    target_link_libraries(${PROJECT_NAME}
+        world_editor_core
+        world_editor_common
+        world_editor_server
+        world_editor_world
+        world_editor_renderer
+        world_editor_ui
+        world_editor_gameplay
+        glm::glm
+        imgui
+        dbghelp
+    )
 
-# Install targets
-install(TARGETS ${PROJECT_NAME} Game
-    RUNTIME DESTINATION bin
-)
+    # Install targets
+    install(TARGETS ${PROJECT_NAME} Game
+        RUNTIME DESTINATION bin
+    )
 
-# Compiler warnings
-if(MSVC)
+    # Compiler warnings
     target_compile_options(${PROJECT_NAME} PRIVATE /W3)
-else()
-    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
 # Copy resources at configure time
